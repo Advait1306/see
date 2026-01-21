@@ -1,4 +1,5 @@
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
+use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::sync::FairMutex;
@@ -153,5 +154,10 @@ impl Terminal {
             had_events = true;
         }
         had_events
+    }
+
+    pub fn scroll(&self, delta: i32) {
+        let mut term = self.term.lock();
+        term.scroll_display(Scroll::Delta(delta));
     }
 }

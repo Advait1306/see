@@ -1,6 +1,6 @@
 use crate::terminal::Terminal;
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Line, Point};
+use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
 use gpui::prelude::*;
@@ -28,16 +28,17 @@ const ANSI_COLORS: [(u8, u8, u8); 16] = [
     (0xcd, 0xd6, 0xf4), // 15: Bright White
 ];
 
-fn rgb_color(r: u8, g: u8, b: u8) -> Rgba {
+fn rgb_color(r: u8, g: u8, b: u8) -> Hsla {
     Rgba {
         r: r as f32 / 255.0,
         g: g as f32 / 255.0,
         b: b as f32 / 255.0,
         a: 1.0,
     }
+    .into()
 }
 
-fn ansi_to_rgb(color: AnsiColor) -> Option<Rgba> {
+fn ansi_to_hsla(color: AnsiColor) -> Option<Hsla> {
     match color {
         AnsiColor::Named(named) => {
             let idx = match named {
@@ -57,8 +58,8 @@ fn ansi_to_rgb(color: AnsiColor) -> Option<Rgba> {
                 NamedColor::BrightMagenta => 13,
                 NamedColor::BrightCyan => 14,
                 NamedColor::BrightWhite => 15,
-                NamedColor::Foreground => return None, // Use default
-                NamedColor::Background => return None, // Use default
+                NamedColor::Foreground => return None,
+                NamedColor::Background => return None,
                 _ => return None,
             };
             let (r, g, b) = ANSI_COLORS[idx];
@@ -70,14 +71,12 @@ fn ansi_to_rgb(color: AnsiColor) -> Option<Rgba> {
                 let (r, g, b) = ANSI_COLORS[idx as usize];
                 Some(rgb_color(r, g, b))
             } else if idx < 232 {
-                // 216 color cube (6x6x6)
                 let idx = idx - 16;
                 let r = if idx / 36 > 0 { (idx / 36) * 40 + 55 } else { 0 };
                 let g = if (idx / 6) % 6 > 0 { ((idx / 6) % 6) * 40 + 55 } else { 0 };
                 let b = if idx % 6 > 0 { (idx % 6) * 40 + 55 } else { 0 };
                 Some(rgb_color(r, g, b))
             } else {
-                // Grayscale (24 shades)
                 let gray = (idx - 232) * 10 + 8;
                 Some(rgb_color(gray, gray, gray))
             }
@@ -85,9 +84,140 @@ fn ansi_to_rgb(color: AnsiColor) -> Option<Rgba> {
     }
 }
 
+// Terminal dimensions
+const CELL_WIDTH: f32 = 7.8;
+const CELL_HEIGHT: f32 = 18.0;
+const PADDING: f32 = 8.0;
+const TAB_BAR_HEIGHT: f32 = 72.0;
+
+// Default colors
+fn default_fg() -> Hsla {
+    rgb_color(0xcd, 0xd6, 0xf4)
+}
+
+fn default_bg() -> Hsla {
+    rgb_color(0x1e, 0x1e, 0x2e)
+}
+
+fn cursor_color() -> Hsla {
+    rgb_color(0xcd, 0xd6, 0xf4)
+}
+
+fn cursor_unfocused_color() -> Hsla {
+    rgb_color(0x6c, 0x70, 0x86)
+}
+
+// Batched text run - combines consecutive characters with same style
+struct BatchedTextRun {
+    line: i32,
+    col: usize,
+    text: String,
+    cell_count: usize,
+    color: Hsla,
+    background: Option<Hsla>,
+    bold: bool,
+}
+
+impl BatchedTextRun {
+    fn new(line: i32, col: usize, c: char, color: Hsla, background: Option<Hsla>, bold: bool) -> Self {
+        Self {
+            line,
+            col,
+            text: c.to_string(),
+            cell_count: 1,
+            color,
+            background,
+            bold,
+        }
+    }
+
+    fn can_append(&self, color: Hsla, background: Option<Hsla>, bold: bool) -> bool {
+        self.color == color && self.background == background && self.bold == bold
+    }
+
+    fn append(&mut self, c: char) {
+        self.text.push(c);
+        self.cell_count += 1;
+    }
+
+    fn paint(&self, origin: gpui::Point<Pixels>, cell_width: Pixels, line_height: Pixels, window: &mut Window, cx: &mut App) {
+        let pos = gpui::Point::new(
+            origin.x + px(self.col as f32 * f32::from(cell_width)),
+            origin.y + px(self.line as f32 * f32::from(line_height)),
+        );
+
+        // Paint background if set
+        if let Some(bg) = self.background {
+            let bounds = Bounds::new(
+                pos,
+                Size {
+                    width: cell_width * self.cell_count as f32,
+                    height: line_height,
+                },
+            );
+            window.paint_quad(fill(bounds, bg));
+        }
+
+        // Paint text
+        let font = Font {
+            family: "Menlo".into(),
+            features: FontFeatures::default(),
+            fallbacks: None,
+            weight: if self.bold { FontWeight::BOLD } else { FontWeight::NORMAL },
+            style: FontStyle::Normal,
+        };
+
+        let text_run = TextRun {
+            len: self.text.len(),
+            font,
+            color: self.color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+
+        let font_size = px(13.0);
+        let shaped = window.text_system().shape_line(
+            self.text.clone().into(),
+            font_size,
+            &[text_run],
+            Some(cell_width),
+        );
+        let _ = shaped.paint(pos, line_height, window, cx);
+    }
+}
+
+// Background rectangle
+struct BackgroundRect {
+    line: i32,
+    col: usize,
+    cell_count: usize,
+    color: Hsla,
+}
+
+impl BackgroundRect {
+    fn paint(&self, origin: gpui::Point<Pixels>, cell_width: Pixels, line_height: Pixels, window: &mut Window) {
+        let pos = gpui::Point::new(
+            origin.x + px(self.col as f32 * f32::from(cell_width)),
+            origin.y + px(self.line as f32 * f32::from(line_height)),
+        );
+        let bounds = Bounds::new(
+            pos,
+            Size {
+                width: cell_width * self.cell_count as f32,
+                height: line_height,
+            },
+        );
+        window.paint_quad(fill(bounds, self.color));
+    }
+}
+
 pub struct TerminalView {
     terminal: Arc<parking_lot::Mutex<Terminal>>,
     focus_handle: FocusHandle,
+    scroll_accumulator: f32,
+    last_size: Option<(u16, u16)>,
+    bounds_observer_set: bool,
 }
 
 impl TerminalView {
@@ -101,7 +231,6 @@ impl TerminalView {
                     .timer(Duration::from_millis(30))
                     .await;
 
-                // Check if terminal has new output
                 let has_updates = term.lock().drain_events();
 
                 if has_updates {
@@ -118,77 +247,48 @@ impl TerminalView {
         Self {
             terminal,
             focus_handle: cx.focus_handle(),
+            scroll_accumulator: 0.0,
+            last_size: None,
+            bounds_observer_set: false,
+        }
+    }
+
+    fn do_resize(&mut self, window: &Window) {
+        let viewport = window.viewport_size();
+        let available_width = f32::from(viewport.width) - (PADDING * 2.0);
+        let available_height = f32::from(viewport.height) - TAB_BAR_HEIGHT - (PADDING * 2.0);
+        let cols = (available_width / CELL_WIDTH).floor().max(1.0) as u16;
+        let rows = (available_height / CELL_HEIGHT).floor().max(1.0) as u16;
+
+        let new_size = (cols, rows);
+        if self.last_size != Some(new_size) {
+            self.last_size = Some(new_size);
+            self.terminal.lock().resize(cols, rows, CELL_WIDTH as u16, CELL_HEIGHT as u16);
         }
     }
 }
 
-#[derive(Clone)]
-struct StyledCell {
-    c: char,
-    fg: Option<Rgba>,
-    bg: Option<Rgba>,
-    bold: bool,
-}
-
-struct TerminalLine {
-    cells: Vec<StyledCell>,
-    cursor_col: Option<usize>,
-}
-
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let terminal = self.terminal.lock();
-
-        // Build lines with color info
-        let mut lines: Vec<TerminalLine> = Vec::new();
-        let mut cursor_point: Option<Point> = None;
-
-        terminal.with_term(|term| {
-            let grid = term.grid();
-            let cols = grid.columns();
-            let content = term.renderable_content();
-            cursor_point = Some(content.cursor.point);
-
-            for line_idx in 0..grid.screen_lines() {
-                let mut cells: Vec<StyledCell> = Vec::with_capacity(cols);
-                let row = &grid[Line(line_idx as i32)];
-
-                for col_idx in 0..cols {
-                    let cell = &row[Column(col_idx)];
-
-                    // Handle wide characters and placeholders
-                    if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
-                        continue;
-                    }
-
-                    let c = if cell.c == '\0' { ' ' } else { cell.c };
-                    let fg = ansi_to_rgb(cell.fg);
-                    let bg = ansi_to_rgb(cell.bg);
-                    let bold = cell.flags.contains(CellFlags::BOLD);
-
-                    cells.push(StyledCell { c, fg, bg, bold });
-                }
-
-                // Determine if cursor is on this line
-                let cursor_col = cursor_point.and_then(|cp| {
-                    if cp.line.0 == line_idx as i32 {
-                        Some(cp.column.0)
-                    } else {
-                        None
-                    }
-                });
-
-                lines.push(TerminalLine { cells, cursor_col });
-            }
-        });
-
-        drop(terminal); // Release lock before building UI
-
         let focus_handle = self.focus_handle.clone();
         let is_focused = focus_handle.is_focused(window);
 
+        // Set up bounds observer on first render
+        if !self.bounds_observer_set {
+            self.bounds_observer_set = true;
+            self.do_resize(window);
+            cx.observe_window_bounds(window, |this: &mut Self, window, cx| {
+                this.do_resize(window);
+                cx.notify();
+            })
+            .detach();
+        }
+
+        // Extract terminal content for the element
+        let terminal = self.terminal.clone();
+
         div()
-            .id("terminal")
+            .id("terminal-wrapper")
             .key_context("Terminal")
             .track_focus(&focus_handle)
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _window, cx| {
@@ -201,75 +301,187 @@ impl Render for TerminalView {
             .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, window, cx| {
                 cx.focus_self(window);
             }))
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
+                let pixel_delta = match event.delta {
+                    ScrollDelta::Lines(lines) => f32::from(lines.y) * CELL_HEIGHT,
+                    ScrollDelta::Pixels(pixels) => f32::from(pixels.y),
+                };
+
+                this.scroll_accumulator += pixel_delta;
+
+                let lines = (this.scroll_accumulator / CELL_HEIGHT) as i32;
+                if lines != 0 {
+                    this.scroll_accumulator -= lines as f32 * CELL_HEIGHT;
+                    this.terminal.lock().scroll(lines);
+                    cx.notify();
+                }
+            }))
             .size_full()
-            .bg(rgb(0x1e1e2e))
-            .p_2()
-            .font_family("Menlo")
-            .text_size(px(13.0))
-            .text_color(rgb(0xcdd6f4))
-            .overflow_hidden()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_0()
-                    .children(lines.into_iter().enumerate().map(|(_line_idx, line)| {
-                        render_terminal_line(line, is_focused)
-                    })),
-            )
+            .child(TerminalElement {
+                terminal,
+                is_focused,
+            })
     }
-}
-
-// Character width for Menlo 13px (monospace)
-const CHAR_WIDTH: f32 = 7.8;
-
-fn render_terminal_line(line: TerminalLine, is_focused: bool) -> Div {
-    // If line is empty, add a space
-    if line.cells.is_empty() {
-        return div().line_height(px(18.0)).child(" ");
-    }
-
-    // Render each character in a fixed-width cell for proper alignment
-    div()
-        .line_height(px(18.0))
-        .flex()
-        .flex_row()
-        .children(line.cells.into_iter().enumerate().map(|(col_idx, cell)| {
-            let is_cursor = line.cursor_col == Some(col_idx);
-
-            let mut el = div()
-                .w(px(CHAR_WIDTH))
-                .flex_shrink_0()
-                .child(cell.c.to_string());
-
-            if is_cursor {
-                el = el
-                    .bg(if is_focused {
-                        rgb(0xcdd6f4)
-                    } else {
-                        rgb(0x6c7086)
-                    })
-                    .text_color(rgb(0x1e1e2e));
-            } else {
-                if let Some(fg_color) = cell.fg {
-                    el = el.text_color(fg_color);
-                }
-                if let Some(bg_color) = cell.bg {
-                    el = el.bg(bg_color);
-                }
-            }
-
-            if cell.bold {
-                el = el.font_weight(FontWeight::BOLD);
-            }
-
-            el
-        }))
 }
 
 impl Focusable for TerminalView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+// Custom Element for efficient terminal rendering
+struct TerminalElement {
+    terminal: Arc<parking_lot::Mutex<Terminal>>,
+    is_focused: bool,
+}
+
+struct TerminalLayoutState {
+    text_runs: Vec<BatchedTextRun>,
+    cursor_rect: Option<BackgroundRect>,
+}
+
+impl IntoElement for TerminalElement {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for TerminalElement {
+    type RequestLayoutState = ();
+    type PrepaintState = TerminalLayoutState;
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let mut style = Style::default();
+        style.size.width = relative(1.).into();
+        style.size.height = relative(1.).into();
+        let layout_id = window.request_layout(style, None, cx);
+        (layout_id, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Self::PrepaintState {
+        let terminal = self.terminal.lock();
+        let mut text_runs: Vec<BatchedTextRun> = Vec::new();
+        let mut cursor_rect: Option<BackgroundRect> = None;
+
+        terminal.with_term(|term| {
+            let grid = term.grid();
+            let cols = grid.columns();
+            let content = term.renderable_content();
+            let display_offset = content.display_offset as i32;
+            let cursor_point = content.cursor.point;
+
+            for line_idx in 0..grid.screen_lines() {
+                let grid_line = Line(line_idx as i32 - display_offset);
+                let row = &grid[grid_line];
+                let mut current_run: Option<BatchedTextRun> = None;
+
+                for col_idx in 0..cols {
+                    let cell = &row[Column(col_idx)];
+
+                    if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+                        continue;
+                    }
+
+                    let c = if cell.c == '\0' { ' ' } else { cell.c };
+                    let is_cursor = display_offset == 0
+                        && cursor_point.line.0 == line_idx as i32
+                        && cursor_point.column.0 == col_idx;
+
+                    let (fg, bg) = if is_cursor {
+                        // Cursor: inverted colors
+                        let cursor_bg = if self.is_focused {
+                            cursor_color()
+                        } else {
+                            cursor_unfocused_color()
+                        };
+                        cursor_rect = Some(BackgroundRect {
+                            line: line_idx as i32,
+                            col: col_idx,
+                            cell_count: 1,
+                            color: cursor_bg,
+                        });
+                        (default_bg(), None) // Text on cursor is dark
+                    } else {
+                        let fg = ansi_to_hsla(cell.fg).unwrap_or_else(default_fg);
+                        let bg = ansi_to_hsla(cell.bg);
+                        (fg, bg)
+                    };
+
+                    let bold = cell.flags.contains(CellFlags::BOLD);
+
+                    // Try to extend current run or start a new one
+                    if let Some(ref mut run) = current_run {
+                        if run.can_append(fg, bg, bold) && !is_cursor {
+                            run.append(c);
+                        } else {
+                            text_runs.push(current_run.take().unwrap());
+                            current_run = Some(BatchedTextRun::new(line_idx as i32, col_idx, c, fg, bg, bold));
+                        }
+                    } else {
+                        current_run = Some(BatchedTextRun::new(line_idx as i32, col_idx, c, fg, bg, bold));
+                    }
+                }
+
+                if let Some(run) = current_run.take() {
+                    text_runs.push(run);
+                }
+            }
+        });
+
+        TerminalLayoutState { text_runs, cursor_rect }
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        layout: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let cell_width = px(CELL_WIDTH);
+        let line_height = px(CELL_HEIGHT);
+        let origin = bounds.origin + gpui::point(px(PADDING), px(PADDING));
+
+        // Paint background
+        window.paint_quad(fill(bounds, default_bg()));
+
+        // Paint cursor background
+        if let Some(ref cursor) = layout.cursor_rect {
+            cursor.paint(origin, cell_width, line_height, window);
+        }
+
+        // Paint text runs
+        for run in &layout.text_runs {
+            run.paint(origin, cell_width, line_height, window, cx);
+        }
     }
 }
 

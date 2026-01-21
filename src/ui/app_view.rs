@@ -328,7 +328,12 @@ impl Render for AppView {
             .child(self.render_terminal_tabs(cx))
             .child(
                 div()
+                    .id("terminal-container")
                     .flex_1()
+                    .w_full()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
                     .overflow_hidden()
                     .map(|el| {
                         if let Some(terminal) = active_terminal {
