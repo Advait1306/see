@@ -1,0 +1,31 @@
+[package]
+name = "august"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "august"
+path = "src/main.rs"
+
+[package.metadata.bundle]
+name = "August"
+identifier = "com.august.app"
+category = "public.app-category.developer-tools"
+short_description = "A terminal application with workspaces"
+osx_minimum_system_version = "10.15"
+
+[dependencies]
+alacritty_terminal = "0.25.1"
+anyhow = "1.0.100"
+core-text = "=21.0.0"
+dirs = "6.0.0"
+env_logger = "0.11.8"
+futures = "0.3.31"
+gpui = "0.2.2"
+log = "0.4.29"
+parking_lot = "0.12.5"
+rfd = "0.17.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+smol = "2.0.2"
+uuid = { version = "1.19.0", features = ["v4"] }
