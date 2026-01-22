@@ -528,6 +528,7 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "log",
+ "notify",
  "parking_lot",
  "rfd",
  "serde",

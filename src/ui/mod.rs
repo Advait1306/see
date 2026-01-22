@@ -1,4 +1,5 @@
 pub mod app_view;
+pub mod file_tree;
 pub mod pane;
 pub mod pane_group;
 mod terminal_view;

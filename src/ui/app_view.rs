@@ -1,14 +1,16 @@
 use crate::config::{self, AppState, WorkspaceConfig, MemberConfig};
 use crate::terminal::Terminal;
+use crate::ui::file_tree::{FileTree, FileTreeEvent};
 use crate::ui::pane::{Pane, Axis};
 use crate::ui::pane_group::{Member, PaneAxis, PaneGroup, PaneGroupEvent};
 use crate::ui::TerminalView;
-use crate::workspace::WorkspaceManager;
+use crate::workspace::{WorkspaceManager, WorkspaceEvent};
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::{Icon, IconName, Sizable};
 use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
 use gpui_component::{Collapsible, Side};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -17,20 +19,42 @@ pub const SIDEBAR_WIDTH: f32 = 200.0;
 pub struct AppView {
     workspace_manager: Entity<WorkspaceManager>,
     workspace_panes: HashMap<String, Entity<PaneGroup>>,
+    workspace_expanded_paths: HashMap<String, HashSet<PathBuf>>,
     focus_handle: FocusHandle,
     _keystroke_subscription: Option<Subscription>,
     sidebar_collapsed: bool,
+    file_tree: Option<Entity<FileTree>>,
+    file_tree_visible: bool,
 }
 
 impl AppView {
     pub fn new(workspace_manager: Entity<WorkspaceManager>, cx: &mut Context<Self>) -> Self {
+        // Subscribe to workspace manager events
+        cx.subscribe(&workspace_manager, |this, _manager, event, cx| {
+            match event {
+                WorkspaceEvent::ActiveWorkspaceChanged => {
+                    this.on_active_workspace_changed(cx);
+                }
+            }
+        })
+        .detach();
+
         Self {
             workspace_manager,
             workspace_panes: HashMap::new(),
+            workspace_expanded_paths: HashMap::new(),
             focus_handle: cx.focus_handle(),
             _keystroke_subscription: None,
             sidebar_collapsed: false,
+            file_tree: None,
+            file_tree_visible: false,
         }
+    }
+
+    fn on_active_workspace_changed(&mut self, cx: &mut Context<Self>) {
+        self.update_file_tree_path(cx);
+        self.save_state(cx);
+        cx.notify();
     }
 
     pub fn set_keystroke_subscription(&mut self, subscription: Subscription) {
@@ -52,17 +76,25 @@ impl AppView {
                         active_index: 0,
                     });
 
+                let expanded_paths = self
+                    .workspace_expanded_paths
+                    .get(&w.id)
+                    .cloned()
+                    .unwrap_or_default();
+
                 WorkspaceConfig {
                     id: w.id.clone(),
                     name: w.name.clone(),
                     path: w.path.clone(),
                     layout,
+                    expanded_paths,
                 }
             })
             .collect();
         AppState {
             workspaces,
             active_workspace_index: manager.active_workspace_index,
+            file_tree_visible: self.file_tree_visible,
         }
     }
 
@@ -130,6 +162,8 @@ impl AppView {
             self.subscribe_to_pane_group(&pane_group, cx);
             self.workspace_panes
                 .insert(workspace_config.id.clone(), pane_group);
+            self.workspace_expanded_paths
+                .insert(workspace_config.id.clone(), workspace_config.expanded_paths.clone());
         }
 
         // Set the active workspace
@@ -147,7 +181,69 @@ impl AppView {
             });
         }
 
+        // Restore file tree visibility and create file tree if needed
+        self.file_tree_visible = state.file_tree_visible;
+        if self.file_tree_visible {
+            self.create_file_tree(cx);
+        }
+
         cx.notify();
+    }
+
+    fn create_file_tree(&mut self, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace_manager.read(cx).active_workspace() {
+            let workspace_id = workspace.id.clone();
+            let path = workspace.path.clone();
+            let expanded_paths = self
+                .workspace_expanded_paths
+                .get(&workspace_id)
+                .cloned()
+                .unwrap_or_default();
+
+            let file_tree = cx.new(|cx| FileTree::new(path, expanded_paths, cx));
+
+            // Subscribe to file tree events
+            cx.subscribe(&file_tree, |this, file_tree, event, cx| {
+                match event {
+                    FileTreeEvent::ToggleDirectory(path) => {
+                        this.handle_toggle_directory(path.clone(), &file_tree, cx);
+                    }
+                }
+            })
+            .detach();
+
+            self.file_tree = Some(file_tree);
+        }
+    }
+
+    fn handle_toggle_directory(
+        &mut self,
+        path: PathBuf,
+        file_tree: &Entity<FileTree>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace_manager.read(cx).active_workspace() {
+            let workspace_id = workspace.id.clone();
+            let expanded_paths = self
+                .workspace_expanded_paths
+                .entry(workspace_id)
+                .or_default();
+
+            // Toggle the path
+            if expanded_paths.contains(&path) {
+                expanded_paths.remove(&path);
+            } else {
+                expanded_paths.insert(path);
+            }
+
+            // Update file tree with new expanded paths
+            let new_expanded = expanded_paths.clone();
+            file_tree.update(cx, |tree, cx| {
+                tree.set_expanded_paths(new_expanded, cx);
+            });
+
+            self.save_state(cx);
+        }
     }
 
     fn create_member_from_config(
@@ -273,30 +369,15 @@ impl AppView {
     }
 
     pub fn next_workspace(&mut self, cx: &mut Context<Self>) {
-        self.workspace_manager.update(cx, |m, _| {
-            if m.workspaces.len() > 1 {
-                if let Some(current) = m.active_workspace_index {
-                    m.active_workspace_index = Some((current + 1) % m.workspaces.len());
-                }
-            }
+        self.workspace_manager.update(cx, |m, cx| {
+            m.next_workspace(cx);
         });
-        cx.notify();
-        self.save_state(cx);
     }
 
     pub fn prev_workspace(&mut self, cx: &mut Context<Self>) {
-        self.workspace_manager.update(cx, |m, _| {
-            if m.workspaces.len() > 1 {
-                if let Some(current) = m.active_workspace_index {
-                    m.active_workspace_index = Some(if current == 0 {
-                        m.workspaces.len() - 1
-                    } else {
-                        current - 1
-                    });
-                }
-            }
+        self.workspace_manager.update(cx, |m, cx| {
+            m.prev_workspace(cx);
         });
-        cx.notify();
         self.save_state(cx);
     }
 
@@ -354,11 +435,9 @@ impl AppView {
     }
 
     pub fn select_workspace(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.workspace_manager.update(cx, |m, _| {
-            m.set_active(index);
+        self.workspace_manager.update(cx, |m, cx| {
+            m.set_active(index, cx);
         });
-        cx.notify();
-        self.save_state(cx);
     }
 
     fn active_workspace_id(&self, cx: &App) -> Option<String> {
@@ -429,6 +508,45 @@ impl AppView {
             SIDEBAR_WIDTH
         }
     }
+
+    pub fn toggle_file_tree(&mut self, cx: &mut Context<Self>) {
+        self.file_tree_visible = !self.file_tree_visible;
+
+        if self.file_tree_visible && self.file_tree.is_none() {
+            self.create_file_tree(cx);
+        }
+
+        self.save_state(cx);
+        cx.notify();
+    }
+
+    fn update_file_tree_path(&mut self, cx: &mut Context<Self>) {
+        if self.file_tree_visible {
+            // Recreate file tree for the new workspace (with correct expanded paths and subscription)
+            self.file_tree = None;
+            self.create_file_tree(cx);
+        }
+    }
+
+    fn render_file_tree_sidebar(&self, _cx: &Context<Self>) -> impl IntoElement {
+        let file_tree = self.file_tree.clone();
+
+        div()
+            .id("file-tree-sidebar")
+            .w(px(250.0))
+            .h_full()
+            .flex_shrink_0()
+            .border_l_1()
+            .border_color(rgb(0x313244))
+            .bg(rgb(0x181825))
+            .map(|el| {
+                if let Some(ft) = file_tree {
+                    el.child(ft)
+                } else {
+                    el
+                }
+            })
+    }
 }
 
 const TITLE_BAR_HEIGHT: f32 = 38.0;
@@ -460,17 +578,48 @@ impl Render for AppView {
                     .w_full()
                     .flex()
                     .items_center()
-                    .justify_center()
+                    .justify_between()
                     .bg(rgb(0x181825))
                     .border_b_1()
                     .border_color(rgb(0x313244))
                     // Make the title bar draggable for window movement
                     .on_mouse_move(|_, _, _| {})
+                    // Left spacer for traffic lights
+                    .child(div().w(px(80.0)))
+                    // Center title
                     .child(
                         div()
                             .text_sm()
                             .text_color(rgb(0x6c7086))
                             .child(config::APP_NAME)
+                    )
+                    // Right side with toggle button
+                    .child(
+                        div()
+                            .w(px(80.0))
+                            .flex()
+                            .justify_end()
+                            .pr(px(12.0))
+                            .child(
+                                div()
+                                    .id("file-tree-toggle")
+                                    .p(px(6.0))
+                                    .rounded(px(4.0))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(rgb(0x313244)))
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.toggle_file_tree(cx);
+                                    }))
+                                    .child(
+                                        Icon::new(IconName::FolderOpen)
+                                            .small()
+                                            .text_color(if self.file_tree_visible {
+                                                rgb(0xcdd6f4)
+                                            } else {
+                                                rgb(0x6c7086)
+                                            })
+                                    )
+                            )
                     )
             )
             // Main content area
@@ -508,7 +657,10 @@ impl Render for AppView {
                                         }
                                     }),
                             ),
-                    ),
+                    )
+                    .when(self.file_tree_visible, |el| {
+                        el.child(self.render_file_tree_sidebar(cx))
+                    }),
             )
     }
 }

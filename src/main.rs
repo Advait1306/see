@@ -1,4 +1,5 @@
 mod config;
+mod file_watcher;
 mod terminal;
 mod ui;
 mod workspace;
@@ -6,6 +7,8 @@ mod workspace;
 use gpui::*;
 use gpui_component::theme::Theme;
 use gpui_component::Root;
+use gpui_component_assets::Assets;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 use ui::AppView;
@@ -14,9 +17,15 @@ use workspace::WorkspaceManager;
 fn main() {
     env_logger::init();
 
-    Application::new().run(|cx: &mut App| {
+    Application::new().with_assets(Assets).run(|cx: &mut App| {
         // Initialize gpui-component
         gpui_component::init(cx);
+
+        // Register Paper Mono font
+        let font_data = include_bytes!("../assets/fonts/PaperMono-Regular.ttf");
+        cx.text_system()
+            .add_fonts(vec![Cow::Borrowed(font_data.as_slice())])
+            .expect("Failed to load Paper Mono font");
 
         // Customize theme to match Catppuccin Mocha
         {
@@ -71,7 +80,7 @@ fn main() {
         .unwrap();
 
         // Global keystroke interceptor for terminal/workspace switching
-        let keystroke_subscription = cx.intercept_keystrokes(move |event, _window, cx| {
+        let keystroke_subscription = cx.intercept_keystrokes(move |event, window, cx| {
             let key = &event.keystroke;
 
             // Debug: log keystrokes with platform modifier
@@ -85,8 +94,22 @@ fn main() {
             }
 
             if key.modifiers.platform {
+                // Cmd+Q - quit application (doesn't need app_view)
+                if key.key.as_str() == "q" && !key.modifiers.alt {
+                    cx.stop_propagation();
+                    cx.quit();
+                    return;
+                }
+
                 if let Some(app_view) = app_view_for_interceptor.borrow().as_ref() {
                     match (key.key.as_str(), key.modifiers.alt) {
+                        // Cmd+W - close current terminal tab
+                        ("w", false) => {
+                            cx.stop_propagation();
+                            app_view.update(cx, |app, cx| {
+                                app.close_current_terminal(cx);
+                            });
+                        }
                         // Cmd+Shift+[ and ] (shown as { and }) - switch terminals
                         ("{", false) => {
                             cx.stop_propagation();
@@ -114,6 +137,14 @@ fn main() {
                             });
                         }
                         _ => {}
+                    }
+
+                    // Cmd+B - toggle file tree
+                    if key.key.as_str() == "b" && !key.modifiers.shift && !key.modifiers.alt {
+                        cx.stop_propagation();
+                        app_view.update(cx, |app, cx| {
+                            app.toggle_file_tree(cx);
+                        });
                     }
                 }
             }

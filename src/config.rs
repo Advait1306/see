@@ -18,7 +18,11 @@ pub const APP_ID: &str = if cfg!(debug_assertions) {
 pub struct AppState {
     pub workspaces: Vec<WorkspaceConfig>,
     pub active_workspace_index: Option<usize>,
+    #[serde(default)]
+    pub file_tree_visible: bool,
 }
+
+use std::collections::HashSet;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct WorkspaceConfig {
@@ -27,6 +31,8 @@ pub struct WorkspaceConfig {
     pub path: PathBuf,
     #[serde(default = "default_layout")]
     pub layout: MemberConfig,
+    #[serde(default)]
+    pub expanded_paths: HashSet<PathBuf>,
 }
 
 fn default_layout() -> MemberConfig {

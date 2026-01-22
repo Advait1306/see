@@ -163,7 +163,7 @@ impl BatchedTextRun {
 
         // Paint text
         let font = Font {
-            family: "Menlo".into(),
+            family: "Paper Mono".into(),
             features: FontFeatures::default(),
             fallbacks: None,
             weight: if self.bold { FontWeight::BOLD } else { FontWeight::NORMAL },

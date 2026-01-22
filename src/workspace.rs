@@ -1,3 +1,4 @@
+use gpui::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -24,6 +25,12 @@ pub struct WorkspaceManager {
     pub active_workspace_index: Option<usize>,
 }
 
+pub enum WorkspaceEvent {
+    ActiveWorkspaceChanged,
+}
+
+impl EventEmitter<WorkspaceEvent> for WorkspaceManager {}
+
 impl WorkspaceManager {
     pub fn new() -> Self {
         Self {
@@ -47,9 +54,32 @@ impl WorkspaceManager {
             .and_then(|i| self.workspaces.get(i))
     }
 
-    pub fn set_active(&mut self, index: usize) {
-        if index < self.workspaces.len() {
+    pub fn set_active(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.workspaces.len() && self.active_workspace_index != Some(index) {
             self.active_workspace_index = Some(index);
+            cx.emit(WorkspaceEvent::ActiveWorkspaceChanged);
+        }
+    }
+
+    pub fn next_workspace(&mut self, cx: &mut Context<Self>) {
+        if self.workspaces.len() > 1 {
+            if let Some(current) = self.active_workspace_index {
+                let new_index = (current + 1) % self.workspaces.len();
+                self.set_active(new_index, cx);
+            }
+        }
+    }
+
+    pub fn prev_workspace(&mut self, cx: &mut Context<Self>) {
+        if self.workspaces.len() > 1 {
+            if let Some(current) = self.active_workspace_index {
+                let new_index = if current == 0 {
+                    self.workspaces.len() - 1
+                } else {
+                    current - 1
+                };
+                self.set_active(new_index, cx);
+            }
         }
     }
 
