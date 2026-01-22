@@ -1,11 +1,38 @@
 use crate::file_watcher::FileWatcher;
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::list::{List, ListDelegate, ListItem, ListState};
-use gpui_component::{Icon, IconName, IndexPath, Sizable};
+use gpui_component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
+use gpui_component::{Icon, IconName, IndexPath, Selectable, Sizable};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
+
+/// A wrapper around ListItem that ignores selection styling.
+/// This allows clicks to still work for directory toggling while
+/// preventing the visual selection highlight.
+pub struct NonSelectableItem(ListItem);
+
+impl Selectable for NonSelectableItem {
+    fn selected(self, _selected: bool) -> Self {
+        self // Ignore selection
+    }
+
+    fn is_selected(&self) -> bool {
+        false
+    }
+
+    fn secondary_selected(self, _selected: bool) -> Self {
+        self // Ignore secondary selection
+    }
+}
+
+impl IntoElement for NonSelectableItem {
+    type Element = <ListItem as IntoElement>::Element;
+
+    fn into_element(self) -> Self::Element {
+        self.0.into_element()
+    }
+}
 
 #[derive(Clone)]
 pub struct FileEntry {
@@ -22,7 +49,7 @@ pub struct FileTreeDelegate {
 }
 
 impl ListDelegate for FileTreeDelegate {
-    type Item = ListItem;
+    type Item = NonSelectableItem;
 
     fn items_count(&self, _section: usize, _cx: &App) -> usize {
         self.entries.len()
@@ -40,7 +67,7 @@ impl ListDelegate for FileTreeDelegate {
         let is_dir = entry.is_dir;
         let name = entry.name.clone();
 
-        Some(
+        Some(NonSelectableItem(
             ListItem::new(ix)
                 .py_0()
                 .px_0()
@@ -95,7 +122,7 @@ impl ListDelegate for FileTreeDelegate {
                                 .child(name),
                         ),
                 ),
-        )
+        ))
     }
 
     fn render_empty(
@@ -131,7 +158,6 @@ pub struct FileTree {
     watcher: Option<FileWatcher>,
     list_state: Option<Entity<ListState<FileTreeDelegate>>>,
     focus_handle: FocusHandle,
-    last_selected: Option<usize>,
 }
 
 impl EventEmitter<FileTreeEvent> for FileTree {}
@@ -150,7 +176,6 @@ impl FileTree {
             watcher,
             list_state: None,
             focus_handle: cx.focus_handle(),
-            last_selected: None,
         };
 
         // Set up polling for file changes
@@ -209,7 +234,22 @@ impl FileTree {
                 expanded_paths: self.expanded_paths.clone(),
                 selected_index: None,
             };
-            self.list_state = Some(cx.new(|cx| ListState::new(delegate, window, cx)));
+            let list_state = cx.new(|cx| ListState::new(delegate, window, cx));
+
+            // Subscribe to click events (Confirm) to handle directory toggling
+            cx.subscribe(&list_state, |this, list_entity, event: &ListEvent, cx| {
+                if let ListEvent::Confirm(ix) = event {
+                    let entry = list_entity.read(cx).delegate().entries.get(ix.row).cloned();
+                    if let Some(entry) = entry {
+                        if entry.is_dir {
+                            cx.emit(FileTreeEvent::ToggleDirectory(entry.path));
+                        }
+                    }
+                }
+            })
+            .detach();
+
+            self.list_state = Some(list_state);
         }
     }
 
@@ -276,29 +316,11 @@ impl FileTree {
         entries
     }
 
-    fn check_for_selection_change(&mut self, cx: &mut Context<Self>) {
-        if let Some(list_state) = &self.list_state {
-            let current_selected = list_state.read(cx).delegate().selected_index;
-
-            if current_selected != self.last_selected {
-                if let Some(idx) = current_selected {
-                    let entry = list_state.read(cx).delegate().entries.get(idx).cloned();
-                    if let Some(entry) = entry {
-                        if entry.is_dir {
-                            cx.emit(FileTreeEvent::ToggleDirectory(entry.path));
-                        }
-                    }
-                }
-                self.last_selected = current_selected;
-            }
-        }
-    }
 }
 
 impl Render for FileTree {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_list_state(window, cx);
-        self.check_for_selection_change(cx);
 
         let list_state = self.list_state.clone().unwrap();
 
