@@ -1,1 +1,6 @@
 /target
+*.dmg
+.DS_Store
+.env
+.exploration
+*.p8

@@ -1,3 +1,4 @@
+use crate::config::{self, AppState, WorkspaceConfig};
 use crate::terminal::Terminal;
 use crate::ui::TerminalView;
 use crate::workspace::WorkspaceManager;
@@ -23,22 +24,110 @@ pub struct AppView {
 
 impl AppView {
     pub fn new(workspace_manager: Entity<WorkspaceManager>, cx: &mut Context<Self>) -> Self {
-        let mut app = Self {
+        Self {
             workspace_manager,
             workspace_terminals: HashMap::new(),
             focus_handle: cx.focus_handle(),
             _keystroke_subscription: None,
-        };
-
-        // Add default workspace at home directory
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        app.add_workspace("Home".to_string(), home, cx);
-
-        app
+        }
     }
 
     pub fn set_keystroke_subscription(&mut self, subscription: Subscription) {
         self._keystroke_subscription = Some(subscription);
+    }
+
+    pub fn collect_state(&self, cx: &App) -> AppState {
+        let manager = self.workspace_manager.read(cx);
+        let workspaces = manager
+            .workspaces
+            .iter()
+            .map(|w| {
+                let (terminal_count, active_terminal_index) = self
+                    .workspace_terminals
+                    .get(&w.id)
+                    .map(|wt| (wt.terminals.len(), wt.active_index))
+                    .unwrap_or((1, 0));
+                WorkspaceConfig {
+                    id: w.id.clone(),
+                    name: w.name.clone(),
+                    path: w.path.clone(),
+                    terminal_count,
+                    active_terminal_index,
+                }
+            })
+            .collect();
+        AppState {
+            workspaces,
+            active_workspace_index: manager.active_workspace_index,
+        }
+    }
+
+    pub fn save_state(&self, cx: &App) {
+        let state = self.collect_state(cx);
+        config::save_state(&state);
+    }
+
+    pub fn restore_state(&mut self, state: AppState, cx: &mut Context<Self>) {
+        if state.workspaces.is_empty() {
+            // No saved state, create default workspace
+            let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+            self.add_workspace("Home".to_string(), home, cx);
+            return;
+        }
+
+        for workspace_config in &state.workspaces {
+            // Add workspace to manager with the saved ID
+            self.workspace_manager.update(cx, |m, _| {
+                let workspace = crate::workspace::Workspace {
+                    id: workspace_config.id.clone(),
+                    name: workspace_config.name.clone(),
+                    path: workspace_config.path.clone(),
+                };
+                m.workspaces.push(workspace);
+            });
+
+            // Create terminals for this workspace
+            let mut terminals = Vec::new();
+            let terminal_count = workspace_config.terminal_count.max(1);
+            for _ in 0..terminal_count {
+                if let Ok(terminal) = Terminal::new(workspace_config.path.clone()) {
+                    let terminal = Arc::new(parking_lot::Mutex::new(terminal));
+                    let terminal_view = cx.new(|cx| TerminalView::new(terminal, cx));
+                    terminals.push(terminal_view);
+                }
+            }
+
+            if !terminals.is_empty() {
+                let active_index = workspace_config
+                    .active_terminal_index
+                    .min(terminals.len() - 1);
+                self.workspace_terminals.insert(
+                    workspace_config.id.clone(),
+                    WorkspaceTerminals {
+                        terminals,
+                        active_index,
+                        path: workspace_config.path.clone(),
+                    },
+                );
+            }
+        }
+
+        // Set the active workspace
+        if let Some(active_index) = state.active_workspace_index {
+            self.workspace_manager.update(cx, |m, _| {
+                if active_index < m.workspaces.len() {
+                    m.active_workspace_index = Some(active_index);
+                } else if !m.workspaces.is_empty() {
+                    m.active_workspace_index = Some(0);
+                }
+            });
+        } else if !state.workspaces.is_empty() {
+            self.workspace_manager.update(cx, |m, _| {
+                m.active_workspace_index = Some(0);
+            });
+        }
+
+        cx.notify();
     }
 
     pub fn add_workspace(&mut self, name: String, path: PathBuf, cx: &mut Context<Self>) {
@@ -63,6 +152,7 @@ impl AppView {
 
         // Switch to the new workspace
         self.select_workspace(new_index, cx);
+        self.save_state(cx);
     }
 
     fn add_terminal_to_workspace(&mut self, workspace_id: &str, cx: &mut Context<Self>) {
@@ -73,6 +163,7 @@ impl AppView {
                 workspace_terms.terminals.push(terminal_view);
                 workspace_terms.active_index = workspace_terms.terminals.len() - 1;
                 cx.notify();
+                self.save_state(cx);
             }
         }
     }
@@ -82,6 +173,7 @@ impl AppView {
             if index < workspace_terms.terminals.len() {
                 workspace_terms.active_index = index;
                 cx.notify();
+                self.save_state(cx);
             }
         }
     }
@@ -93,6 +185,7 @@ impl AppView {
                     workspace_terms.active_index =
                         (workspace_terms.active_index + 1) % workspace_terms.terminals.len();
                     cx.notify();
+                    self.save_state(cx);
                 }
             }
         }
@@ -107,6 +200,7 @@ impl AppView {
             }
         });
         cx.notify();
+        self.save_state(cx);
     }
 
     pub fn prev_workspace(&mut self, cx: &mut Context<Self>) {
@@ -122,6 +216,7 @@ impl AppView {
             }
         });
         cx.notify();
+        self.save_state(cx);
     }
 
     pub fn prev_terminal(&mut self, cx: &mut Context<Self>) {
@@ -134,6 +229,7 @@ impl AppView {
                         workspace_terms.active_index - 1
                     };
                     cx.notify();
+                    self.save_state(cx);
                 }
             }
         }
@@ -144,6 +240,7 @@ impl AppView {
             m.set_active(index);
         });
         cx.notify();
+        self.save_state(cx);
     }
 
     fn active_terminal(&self, cx: &App) -> Option<Entity<TerminalView>> {

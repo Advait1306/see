@@ -1,3 +1,4 @@
+mod config;
 mod terminal;
 mod ui;
 mod workspace;
@@ -12,6 +13,9 @@ fn main() {
     env_logger::init();
 
     Application::new().run(|cx: &mut App| {
+        // Load saved state
+        let saved_state = config::load_state();
+
         let workspace_manager = cx.new(|_| WorkspaceManager::new());
 
         let app_view_holder: Rc<RefCell<Option<Entity<AppView>>>> = Rc::new(RefCell::new(None));
@@ -31,7 +35,11 @@ fn main() {
                 ..Default::default()
             },
             |_, cx| {
-                let app_view = cx.new(|cx| AppView::new(workspace_manager, cx));
+                let app_view = cx.new(|cx| {
+                    let mut app = AppView::new(workspace_manager, cx);
+                    app.restore_state(saved_state, cx);
+                    app
+                });
                 *app_view_holder.borrow_mut() = Some(app_view.clone());
                 app_view
             },
