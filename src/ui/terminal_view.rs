@@ -84,11 +84,14 @@ fn ansi_to_hsla(color: AnsiColor) -> Option<Hsla> {
     }
 }
 
+use crate::ui::app_view::SIDEBAR_WIDTH;
+
 // Terminal dimensions
 const CELL_WIDTH: f32 = 7.8;
 const CELL_HEIGHT: f32 = 18.0;
 const PADDING: f32 = 8.0;
-const TAB_BAR_HEIGHT: f32 = 72.0;
+const TERMINAL_TAB_HEIGHT: f32 = 32.0;
+const TITLE_BAR_HEIGHT: f32 = 38.0;
 
 // Default colors
 fn default_fg() -> Hsla {
@@ -255,8 +258,9 @@ impl TerminalView {
 
     fn do_resize(&mut self, window: &Window) {
         let viewport = window.viewport_size();
-        let available_width = f32::from(viewport.width) - (PADDING * 2.0);
-        let available_height = f32::from(viewport.height) - TAB_BAR_HEIGHT - (PADDING * 2.0);
+        // Account for sidebar width, title bar, and terminal tab height
+        let available_width = f32::from(viewport.width) - SIDEBAR_WIDTH - (PADDING * 2.0);
+        let available_height = f32::from(viewport.height) - TITLE_BAR_HEIGHT - TERMINAL_TAB_HEIGHT - (PADDING * 2.0);
         let cols = (available_width / CELL_WIDTH).floor().max(1.0) as u16;
         let rows = (available_height / CELL_HEIGHT).floor().max(1.0) as u16;
 

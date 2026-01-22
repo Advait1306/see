@@ -4,6 +4,8 @@ mod ui;
 mod workspace;
 
 use gpui::*;
+use gpui_component::theme::Theme;
+use gpui_component::Root;
 use std::cell::RefCell;
 use std::rc::Rc;
 use ui::AppView;
@@ -13,6 +15,26 @@ fn main() {
     env_logger::init();
 
     Application::new().run(|cx: &mut App| {
+        // Initialize gpui-component
+        gpui_component::init(cx);
+
+        // Customize theme to match Catppuccin Mocha
+        {
+            let theme = Theme::global_mut(cx);
+            // Sidebar colors
+            theme.sidebar = rgb(0x181825).into();
+            theme.sidebar_foreground = rgb(0xcdd6f4).into();
+            theme.sidebar_accent = rgb(0x313244).into();
+            theme.sidebar_accent_foreground = rgb(0xcdd6f4).into();
+            theme.sidebar_border = rgb(0x313244).into();
+            // General colors
+            theme.background = rgb(0x1e1e2e).into();
+            theme.foreground = rgb(0xcdd6f4).into();
+            theme.muted = rgb(0x6c7086).into();
+            theme.muted_foreground = rgb(0xa6adc8).into();
+            theme.border = rgb(0x313244).into();
+        }
+
         // Load saved state
         let saved_state = config::load_state();
 
@@ -25,6 +47,8 @@ fn main() {
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
                     title: Some(config::APP_NAME.into()),
+                    appears_transparent: true,
+                    traffic_light_position: Some(point(px(12.0), px(12.0))),
                     ..Default::default()
                 }),
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -34,14 +58,14 @@ fn main() {
                 ))),
                 ..Default::default()
             },
-            |_, cx| {
+            |window, cx| {
                 let app_view = cx.new(|cx| {
                     let mut app = AppView::new(workspace_manager, cx);
                     app.restore_state(saved_state, cx);
                     app
                 });
                 *app_view_holder.borrow_mut() = Some(app_view.clone());
-                app_view
+                cx.new(|cx| Root::new(app_view, window, cx))
             },
         )
         .unwrap();

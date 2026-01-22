@@ -4,9 +4,13 @@ use crate::ui::TerminalView;
 use crate::workspace::WorkspaceManager;
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
+use gpui_component::{Collapsible, Side};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+pub const SIDEBAR_WIDTH: f32 = 200.0;
 
 
 struct WorkspaceTerminals {
@@ -20,6 +24,7 @@ pub struct AppView {
     workspace_terminals: HashMap<String, WorkspaceTerminals>,
     focus_handle: FocusHandle,
     _keystroke_subscription: Option<Subscription>,
+    sidebar_collapsed: bool,
 }
 
 impl AppView {
@@ -29,6 +34,7 @@ impl AppView {
             workspace_terminals: HashMap::new(),
             focus_handle: cx.focus_handle(),
             _keystroke_subscription: None,
+            sidebar_collapsed: false,
         }
     }
 
@@ -257,7 +263,7 @@ impl AppView {
         manager.active_workspace().map(|w| w.id.clone())
     }
 
-    fn render_tabs(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_sidebar(&self, cx: &Context<Self>) -> impl IntoElement {
         let manager = self.workspace_manager.read(cx);
         let workspaces: Vec<(usize, String, bool)> = manager
             .workspaces
@@ -269,71 +275,56 @@ impl AppView {
             })
             .collect();
 
-        div()
-            .flex()
-            .h(px(40.0))
-            .bg(rgb(0x181825))
-            .border_b_1()
-            .border_color(rgb(0x313244))
-            .items_center()
-            .px_2()
-            .gap_1()
-            .children(workspaces.into_iter().map(|(idx, name, is_active)| {
-                div()
-                    .id(ElementId::Name(format!("tab-{}", idx).into()))
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .when(is_active, |el| el.bg(rgb(0x313244)))
-                    .when(!is_active, |el| el.hover(|el| el.bg(rgb(0x45475a))))
-                    .text_color(if is_active {
-                        rgb(0xcdd6f4)
-                    } else {
-                        rgb(0xa6adc8)
-                    })
-                    .text_sm()
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        this.select_workspace(idx, cx);
-                    }))
-                    .child(name)
-            }))
+        let sidebar_collapsed = self.sidebar_collapsed;
+
+        Sidebar::new(Side::Left)
+            .collapsed(sidebar_collapsed)
             .child(
-                div()
-                    .id("add-workspace")
-                    .px_3()
-                    .py_1()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .hover(|el| el.bg(rgb(0x45475a)))
-                    .text_color(rgb(0x6c7086))
-                    .text_sm()
-                    .on_click(cx.listener(|_this, _, _window, cx| {
-                        let entity = cx.entity().downgrade();
-
-                        cx.spawn(async move |_this_weak, cx| {
-                            let path = rfd::AsyncFileDialog::new()
-                                .set_title("Select Workspace Folder")
-                                .pick_folder()
-                                .await;
-
-                            if let Some(handle) = path {
-                                let path = handle.path().to_path_buf();
-                                let name = path
-                                    .file_name()
-                                    .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| "Workspace".to_string());
-
-                                let _ = cx.update(|cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        this.add_workspace(name, path, cx);
-                                    });
-                                });
-                            }
-                        }).detach();
+                SidebarMenu::new()
+                    .collapsed(sidebar_collapsed)
+                    .children(workspaces.into_iter().map(|(idx, name, is_active)| {
+                        SidebarMenuItem::new(name)
+                            .active(is_active)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.select_workspace(idx, cx);
+                            }))
                     }))
-                    .child("+"),
+                    .child(
+                        SidebarMenuItem::new("+ Add Workspace")
+                            .on_click(cx.listener(|_this, _, _window, cx| {
+                                let entity = cx.entity().downgrade();
+
+                                cx.spawn(async move |_this_weak, cx| {
+                                    let path = rfd::AsyncFileDialog::new()
+                                        .set_title("Select Workspace Folder")
+                                        .pick_folder()
+                                        .await;
+
+                                    if let Some(handle) = path {
+                                        let path = handle.path().to_path_buf();
+                                        let name = path
+                                            .file_name()
+                                            .map(|n| n.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| "Workspace".to_string());
+
+                                        let _ = cx.update(|cx| {
+                                            let _ = entity.update(cx, |this, cx| {
+                                                this.add_workspace(name, path, cx);
+                                            });
+                                        });
+                                    }
+                                }).detach();
+                            })),
+                    ),
             )
+    }
+
+    pub fn sidebar_width(&self) -> f32 {
+        if self.sidebar_collapsed {
+            48.0
+        } else {
+            SIDEBAR_WIDTH
+        }
     }
 
     fn render_terminal_tabs(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -406,6 +397,8 @@ impl AppView {
     }
 }
 
+const TITLE_BAR_HEIGHT: f32 = 38.0;
+
 impl Render for AppView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_terminal = self.active_terminal(cx);
@@ -421,24 +414,64 @@ impl Render for AppView {
             .flex_col()
             .bg(rgb(0x1e1e2e))
             .text_color(rgb(0xcdd6f4))
-            .child(self.render_tabs(cx))
-            .child(self.render_terminal_tabs(cx))
+            // Custom title bar
             .child(
                 div()
-                    .id("terminal-container")
+                    .id("title-bar")
+                    .h(px(TITLE_BAR_HEIGHT))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(rgb(0x181825))
+                    .border_b_1()
+                    .border_color(rgb(0x313244))
+                    // Make the title bar draggable for window movement
+                    .on_mouse_move(|_, _, _| {})
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0x6c7086))
+                            .child("August")
+                    )
+            )
+            // Main content area
+            .child(
+                div()
+                    .id("content-area")
                     .flex_1()
                     .w_full()
                     .min_h_0()
                     .flex()
-                    .flex_col()
-                    .overflow_hidden()
-                    .map(|el| {
-                        if let Some(terminal) = active_terminal {
-                            el.child(terminal)
-                        } else {
-                            el
-                        }
-                    }),
+                    .flex_row()
+                    .child(self.render_sidebar(cx))
+                    .child(
+                        div()
+                            .id("main-content")
+                            .flex_1()
+                            .h_full()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(self.render_terminal_tabs(cx))
+                            .child(
+                                div()
+                                    .id("terminal-container")
+                                    .flex_1()
+                                    .w_full()
+                                    .min_h_0()
+                                    .flex()
+                                    .flex_col()
+                                    .overflow_hidden()
+                                    .map(|el| {
+                                        if let Some(terminal) = active_terminal {
+                                            el.child(terminal)
+                                        } else {
+                                            el
+                                        }
+                                    }),
+                            ),
+                    ),
             )
     }
 }
