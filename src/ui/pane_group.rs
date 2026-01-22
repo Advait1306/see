@@ -19,13 +19,21 @@ impl Member {
         }
     }
 
-    fn render(&self, cx: &mut Context<PaneGroup>, group_entity: Entity<PaneGroup>) -> impl IntoElement {
+    fn render(
+        &self,
+        cx: &mut Context<PaneGroup>,
+        group_entity: Entity<PaneGroup>,
+        path: Vec<usize>,
+        container_bounds: Bounds<Pixels>,
+    ) -> impl IntoElement {
         match self {
             Member::Pane(pane) => div()
                 .size_full()
                 .child(pane.clone())
                 .into_any_element(),
-            Member::Axis(axis) => axis.render(cx, group_entity).into_any_element(),
+            Member::Axis(axis) => axis
+                .render_with_path(cx, group_entity, path, container_bounds)
+                .into_any_element(),
         }
     }
 
@@ -65,8 +73,19 @@ impl PaneAxis {
         }
     }
 
-    fn render(&self, cx: &mut Context<PaneGroup>, group_entity: Entity<PaneGroup>) -> impl IntoElement {
+    fn render_with_path(
+        &self,
+        cx: &mut Context<PaneGroup>,
+        group_entity: Entity<PaneGroup>,
+        path: Vec<usize>,
+        container_bounds: Bounds<Pixels>,
+    ) -> impl IntoElement {
         let is_horizontal = self.axis == Axis::Horizontal;
+        let container_size = if is_horizontal {
+            f32::from(container_bounds.size.width)
+        } else {
+            f32::from(container_bounds.size.height)
+        };
 
         let mut children: Vec<AnyElement> = Vec::new();
 
@@ -76,24 +95,61 @@ impl PaneAxis {
                 let divider_index = i - 1;
                 let axis = self.axis;
                 children.push(
-                    self.render_divider(divider_index, axis, group_entity.clone(), cx)
-                        .into_any_element(),
+                    self.render_divider(
+                        divider_index,
+                        axis,
+                        group_entity.clone(),
+                        path.clone(),
+                        container_size,
+                        cx,
+                    )
+                    .into_any_element(),
                 );
             }
 
-            let child = member.render(cx, group_entity.clone());
+            // Calculate child bounds for nested axes
+            let child_bounds = {
+                let num_dividers = self.members.len().saturating_sub(1);
+                let divider_space = num_dividers as f32 * DIVIDER_SIZE;
+                let available_size = container_size - divider_space;
+                let child_size = available_size * ratio;
+
+                if is_horizontal {
+                    Bounds {
+                        origin: container_bounds.origin,
+                        size: Size {
+                            width: px(child_size),
+                            height: container_bounds.size.height,
+                        },
+                    }
+                } else {
+                    Bounds {
+                        origin: container_bounds.origin,
+                        size: Size {
+                            width: container_bounds.size.width,
+                            height: px(child_size),
+                        },
+                    }
+                }
+            };
+
+            let mut child_path = path.clone();
+            child_path.push(i);
+            let child = member.render(cx, group_entity.clone(), child_path, child_bounds);
             let element = if is_horizontal {
                 div()
                     .h_full()
                     .flex_basis(relative(ratio))
-                    .flex_shrink_0()
+                    .flex_shrink()
+                    .flex_grow()
                     .min_w(px(MIN_PANE_SIZE))
                     .child(child)
             } else {
                 div()
                     .w_full()
                     .flex_basis(relative(ratio))
-                    .flex_shrink_0()
+                    .flex_shrink()
+                    .flex_grow()
                     .min_h(px(MIN_PANE_SIZE))
                     .child(child)
             };
@@ -112,15 +168,29 @@ impl PaneAxis {
         &self,
         divider_index: usize,
         axis: Axis,
-        group_entity: Entity<PaneGroup>,
+        _group_entity: Entity<PaneGroup>,
+        axis_path: Vec<usize>,
+        container_size: f32,
         cx: &mut Context<PaneGroup>,
     ) -> impl IntoElement {
         let is_horizontal = axis == Axis::Horizontal;
 
         div()
-            .id(ElementId::Name(format!("divider-{}", divider_index).into()))
-            .when(is_horizontal, |el| el.w(px(DIVIDER_SIZE)).h_full().cursor_col_resize())
-            .when(!is_horizontal, |el| el.h(px(DIVIDER_SIZE)).w_full().cursor_row_resize())
+            .id(ElementId::Name(
+                format!("divider-{:?}-{}", axis_path, divider_index).into(),
+            ))
+            .flex_shrink_0()
+            .when(is_horizontal, |el| {
+                el.w(px(DIVIDER_SIZE)).h_full()
+            })
+            .when(!is_horizontal, |el| {
+                el.h(px(DIVIDER_SIZE)).w_full()
+            })
+            .cursor(if is_horizontal {
+                CursorStyle::ResizeLeftRight
+            } else {
+                CursorStyle::ResizeUpDown
+            })
             .bg(rgb(0x313244))
             .hover(|el| el.bg(rgb(0x45475a)))
             .on_drag(
@@ -128,21 +198,54 @@ impl PaneAxis {
                     axis,
                     divider_index,
                     initial_ratios: self.ratios.clone(),
+                    axis_path: axis_path.clone(),
+                    start_position: Point::default(),
+                    container_size,
                 },
-                |drag, _, _window, cx| {
-                    cx.new(|_| drag.clone())
-                },
+                |drag, _, _window, cx| cx.new(|_| drag.clone()),
             )
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DividerDrag>, _window, cx| {
-                    let drag = DividerDrag {
-                        axis,
-                        divider_index,
-                        initial_ratios: this.get_root_ratios(),
+                    // Get the actual drag data from the event - this tells us WHICH divider is being dragged
+                    // Clone what we need before borrowing cx mutably
+                    let drag_data = event.drag(cx).clone();
+                    let position = event.event.position;
+
+                    // Check if we need to initialize drag state for this drag
+                    let needs_init = match &this.drag_start {
+                        None => true,
+                        Some(ds) => {
+                            // Different drag if identity changed
+                            ds.axis_path != drag_data.axis_path
+                                || ds.divider_index != drag_data.divider_index
+                        }
                     };
-                    this.handle_divider_drag(&drag, event.event.position, divider_index, cx);
+
+                    if needs_init {
+                        let ratios = this.get_ratios_at_path(&drag_data.axis_path);
+                        log::info!(
+                            "DRAG START: path={:?}, axis={:?}, idx={}",
+                            drag_data.axis_path,
+                            drag_data.axis,
+                            drag_data.divider_index
+                        );
+                        this.drag_start = Some(DragStart {
+                            axis_path: drag_data.axis_path.clone(),
+                            divider_index: drag_data.divider_index,
+                            start_position: position,
+                            initial_ratios: ratios,
+                        });
+                    }
+
+                    this.handle_divider_drag(&drag_data, position, cx);
                 },
             ))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _event: &MouseUpEvent, _window, _cx| {
+                    this.drag_start = None;
+                }),
+            )
     }
 
     fn find_and_split_pane(
@@ -226,15 +329,15 @@ pub struct DividerDrag {
     axis: Axis,
     divider_index: usize,
     initial_ratios: Vec<f32>,
+    axis_path: Vec<usize>,          // Path to locate axis in nested structure
+    start_position: Point<Pixels>,  // Position when drag started
+    container_size: f32,            // Size along axis direction
 }
 
 impl Render for DividerDrag {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        // Invisible drag indicator - we don't need a visible element following the cursor
         div()
-            .when(self.axis == Axis::Horizontal, |el| el.w(px(4.0)).h(px(40.0)))
-            .when(self.axis == Axis::Vertical, |el| el.h(px(4.0)).w(px(40.0)))
-            .bg(rgb(0x89b4fa))
-            .rounded_sm()
     }
 }
 
@@ -242,8 +345,20 @@ pub struct PaneGroup {
     pub root: Member,
     pub path: PathBuf,
     pub active_pane: Option<Entity<Pane>>,
-    drag_start_position: Option<Point<Pixels>>,
     drag_bounds: Option<Bounds<Pixels>>,
+    // Track the start position for the current drag
+    drag_start: Option<DragStart>,
+}
+
+#[derive(Clone)]
+struct DragStart {
+    // Identity of the drag (to detect when a new drag begins)
+    axis_path: Vec<usize>,
+    divider_index: usize,
+    // Position when drag started
+    start_position: Point<Pixels>,
+    // Ratios when drag started
+    initial_ratios: Vec<f32>,
 }
 
 pub enum PaneGroupEvent {
@@ -265,8 +380,8 @@ impl PaneGroup {
             root: Member::Pane(pane.clone()),
             path,
             active_pane: Some(pane),
-            drag_start_position: None,
             drag_bounds: None,
+            drag_start: None,
         }
     }
 
@@ -277,8 +392,8 @@ impl PaneGroup {
             root: Member::Pane(pane.clone()),
             path,
             active_pane: Some(pane),
-            drag_start_position: None,
             drag_bounds: None,
+            drag_start: None,
         }
     }
 
@@ -294,8 +409,8 @@ impl PaneGroup {
             root,
             path,
             active_pane: panes.first().cloned(),
-            drag_start_position: None,
             drag_bounds: None,
+            drag_start: None,
         }
     }
 
@@ -431,66 +546,156 @@ impl PaneGroup {
         }
     }
 
-    fn handle_divider_drag(
-        &mut self,
-        drag: &DividerDrag,
-        position: Point<Pixels>,
-        divider_index: usize,
-        cx: &mut Context<Self>,
-    ) {
-        // Store drag start position if not set
-        if self.drag_start_position.is_none() {
-            self.drag_start_position = Some(position);
+    fn get_ratios_at_path(&self, path: &[usize]) -> Vec<f32> {
+        if path.is_empty() {
+            return self.get_root_ratios();
         }
 
-        if let Member::Axis(axis) = &mut self.root {
-            if drag.axis == axis.axis && divider_index < axis.ratios.len() - 1 {
-                let start = self.drag_start_position.unwrap_or(position);
-                let delta = if axis.axis == Axis::Horizontal {
-                    position.x - start.x
-                } else {
-                    position.y - start.y
-                };
-
-                // Calculate new ratios based on drag delta
-                // This is a simplified version - a full implementation would
-                // need to track the initial total size
-                let delta_ratio = f32::from(delta) / 1000.0; // Approximate scale
-
-                let mut new_ratios = drag.initial_ratios.clone();
-                let left_index = divider_index;
-                let right_index = divider_index + 1;
-
-                if left_index < new_ratios.len() && right_index < new_ratios.len() {
-                    new_ratios[left_index] = (new_ratios[left_index] + delta_ratio).max(0.1);
-                    new_ratios[right_index] = (new_ratios[right_index] - delta_ratio).max(0.1);
-
-                    // Normalize
-                    let total: f32 = new_ratios.iter().sum();
-                    for ratio in &mut new_ratios {
-                        *ratio /= total;
+        let mut current = &self.root;
+        for &idx in path.iter() {
+            match current {
+                Member::Axis(axis) => {
+                    if idx < axis.members.len() {
+                        current = &axis.members[idx];
+                    } else {
+                        return vec![1.0];
                     }
-
-                    axis.ratios = new_ratios;
-                    cx.emit(PaneGroupEvent::StateChanged);
-                    cx.notify();
                 }
+                Member::Pane(_) => return vec![1.0],
+            }
+        }
+
+        match current {
+            Member::Axis(axis) => axis.ratios.clone(),
+            Member::Pane(_) => vec![1.0],
+        }
+    }
+
+    fn get_axis_at_path_mut(&mut self, path: &[usize]) -> Option<&mut PaneAxis> {
+        if path.is_empty() {
+            return match &mut self.root {
+                Member::Axis(axis) => Some(axis),
+                _ => None,
+            };
+        }
+
+        let mut current = &mut self.root;
+        for &idx in path.iter() {
+            match current {
+                Member::Axis(axis) => {
+                    if idx < axis.members.len() {
+                        current = &mut axis.members[idx];
+                    } else {
+                        return None;
+                    }
+                }
+                Member::Pane(_) => return None,
+            }
+        }
+
+        match current {
+            Member::Axis(axis) => Some(axis),
+            Member::Pane(_) => None,
+        }
+    }
+
+    fn handle_divider_drag(
+        &mut self,
+        drag_data: &DividerDrag,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        // Get the drag start state (has start position and initial ratios)
+        let drag_start = match &self.drag_start {
+            Some(ds) => ds.clone(),
+            None => return,
+        };
+
+        // Calculate pixel delta based on axis direction
+        let pixel_delta = if drag_data.axis == Axis::Horizontal {
+            position.x - drag_start.start_position.x
+        } else {
+            position.y - drag_start.start_position.y
+        };
+
+        // Calculate available space (minus dividers)
+        let num_dividers = drag_start.initial_ratios.len().saturating_sub(1);
+        let available_size = drag_data.container_size - (num_dividers as f32 * DIVIDER_SIZE);
+
+        // Avoid division by zero
+        if available_size <= 0.0 {
+            return;
+        }
+
+        // Convert pixel movement to ratio change
+        let delta_ratio = f32::from(pixel_delta) / available_size;
+
+        // Calculate minimum ratio based on MIN_PANE_SIZE
+        let min_ratio = MIN_PANE_SIZE / available_size;
+
+        let mut new_ratios = drag_start.initial_ratios.clone();
+        let left_index = drag_data.divider_index;
+        let right_index = drag_data.divider_index + 1;
+
+        if left_index < new_ratios.len() && right_index < new_ratios.len() {
+            new_ratios[left_index] = (new_ratios[left_index] + delta_ratio).max(min_ratio);
+            new_ratios[right_index] = (new_ratios[right_index] - delta_ratio).max(min_ratio);
+
+            // Normalize ratios to sum to 1.0
+            let total: f32 = new_ratios.iter().sum();
+            for ratio in &mut new_ratios {
+                *ratio /= total;
+            }
+
+            // Apply to the correct axis using the path
+            if let Some(axis) = self.get_axis_at_path_mut(&drag_data.axis_path) {
+                log::info!(
+                    "APPLYING DRAG: path={:?}, axis={:?}, new_ratios={:?}",
+                    drag_data.axis_path,
+                    drag_data.axis,
+                    new_ratios
+                );
+                axis.ratios = new_ratios;
+                cx.emit(PaneGroupEvent::StateChanged);
+                cx.notify();
             }
         }
     }
 }
 
 impl Render for PaneGroup {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let group_entity = cx.entity().clone();
 
         // Debug: log the pane structure
+        let root_type = match &self.root {
+            Member::Pane(_) => "Pane (single, no dividers)",
+            Member::Axis(a) => {
+                if a.members.len() > 1 {
+                    "Axis (multiple members, should have dividers)"
+                } else {
+                    "Axis (single member, no dividers)"
+                }
+            }
+        };
+        log::info!("PaneGroup::render - root type: {}", root_type);
         self.log_structure(cx);
+
+        // Use stored bounds or window bounds as initial container
+        let container_bounds = self.drag_bounds.unwrap_or_else(|| window.bounds());
+        log::info!(
+            "PaneGroup::render - container_bounds: {:?}",
+            container_bounds
+        );
 
         div()
             .id("pane-group")
             .size_full()
-            .child(self.root.render(cx, group_entity))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, _cx| {
+                // Store the current bounds for accurate drag calculations
+                this.drag_bounds = Some(window.bounds());
+            }))
+            .child(self.root.render(cx, group_entity, vec![], container_bounds))
     }
 }
 
