@@ -25,8 +25,35 @@ pub struct WorkspaceConfig {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
-    pub terminal_count: usize,
-    pub active_terminal_index: usize,
+    #[serde(default = "default_layout")]
+    pub layout: MemberConfig,
+}
+
+fn default_layout() -> MemberConfig {
+    MemberConfig::Pane {
+        terminal_count: 1,
+        active_index: 0,
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "type")]
+pub enum MemberConfig {
+    Pane {
+        terminal_count: usize,
+        active_index: usize,
+    },
+    Axis {
+        axis: Axis,
+        ratios: Vec<f32>,
+        members: Vec<MemberConfig>,
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Axis {
+    Horizontal,
+    Vertical,
 }
 
 pub fn config_dir() -> PathBuf {

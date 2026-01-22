@@ -1,5 +1,7 @@
-use crate::config::{self, AppState, WorkspaceConfig};
+use crate::config::{self, AppState, WorkspaceConfig, MemberConfig};
 use crate::terminal::Terminal;
+use crate::ui::pane::{Pane, Axis};
+use crate::ui::pane_group::{Member, PaneAxis, PaneGroup, PaneGroupEvent};
 use crate::ui::TerminalView;
 use crate::workspace::WorkspaceManager;
 use gpui::prelude::*;
@@ -12,16 +14,9 @@ use std::sync::Arc;
 
 pub const SIDEBAR_WIDTH: f32 = 200.0;
 
-
-struct WorkspaceTerminals {
-    terminals: Vec<Entity<TerminalView>>,
-    active_index: usize,
-    path: PathBuf,
-}
-
 pub struct AppView {
     workspace_manager: Entity<WorkspaceManager>,
-    workspace_terminals: HashMap<String, WorkspaceTerminals>,
+    workspace_panes: HashMap<String, Entity<PaneGroup>>,
     focus_handle: FocusHandle,
     _keystroke_subscription: Option<Subscription>,
     sidebar_collapsed: bool,
@@ -31,7 +26,7 @@ impl AppView {
     pub fn new(workspace_manager: Entity<WorkspaceManager>, cx: &mut Context<Self>) -> Self {
         Self {
             workspace_manager,
-            workspace_terminals: HashMap::new(),
+            workspace_panes: HashMap::new(),
             focus_handle: cx.focus_handle(),
             _keystroke_subscription: None,
             sidebar_collapsed: false,
@@ -48,23 +43,53 @@ impl AppView {
             .workspaces
             .iter()
             .map(|w| {
-                let (terminal_count, active_terminal_index) = self
-                    .workspace_terminals
+                let layout = self
+                    .workspace_panes
                     .get(&w.id)
-                    .map(|wt| (wt.terminals.len(), wt.active_index))
-                    .unwrap_or((1, 0));
+                    .map(|pg| self.collect_member_config(&pg.read(cx).root, cx))
+                    .unwrap_or(MemberConfig::Pane {
+                        terminal_count: 1,
+                        active_index: 0,
+                    });
+
                 WorkspaceConfig {
                     id: w.id.clone(),
                     name: w.name.clone(),
                     path: w.path.clone(),
-                    terminal_count,
-                    active_terminal_index,
+                    layout,
                 }
             })
             .collect();
         AppState {
             workspaces,
             active_workspace_index: manager.active_workspace_index,
+        }
+    }
+
+    fn collect_member_config(&self, member: &Member, cx: &App) -> MemberConfig {
+        match member {
+            Member::Pane(pane) => {
+                let pane = pane.read(cx);
+                MemberConfig::Pane {
+                    terminal_count: pane.terminals.len(),
+                    active_index: pane.active_index,
+                }
+            }
+            Member::Axis(axis) => {
+                let axis_type = match axis.axis {
+                    Axis::Horizontal => config::Axis::Horizontal,
+                    Axis::Vertical => config::Axis::Vertical,
+                };
+                MemberConfig::Axis {
+                    axis: axis_type,
+                    ratios: axis.ratios.clone(),
+                    members: axis
+                        .members
+                        .iter()
+                        .map(|m| self.collect_member_config(m, cx))
+                        .collect(),
+                }
+            }
         }
     }
 
@@ -92,30 +117,19 @@ impl AppView {
                 m.workspaces.push(workspace);
             });
 
-            // Create terminals for this workspace
-            let mut terminals = Vec::new();
-            let terminal_count = workspace_config.terminal_count.max(1);
-            for _ in 0..terminal_count {
-                if let Ok(terminal) = Terminal::new(workspace_config.path.clone()) {
-                    let terminal = Arc::new(parking_lot::Mutex::new(terminal));
-                    let terminal_view = cx.new(|cx| TerminalView::new(terminal, cx));
-                    terminals.push(terminal_view);
-                }
-            }
+            // Create pane group from layout
+            let path = workspace_config.path.clone();
+            let pane_group = cx.new(|cx| {
+                let member = Self::create_member_from_config(&workspace_config.layout, &path, cx);
+                let active_pane = member.first_pane();
+                let mut group = PaneGroup::with_root(path.clone(), member, cx);
+                group.active_pane = active_pane;
+                group
+            });
 
-            if !terminals.is_empty() {
-                let active_index = workspace_config
-                    .active_terminal_index
-                    .min(terminals.len() - 1);
-                self.workspace_terminals.insert(
-                    workspace_config.id.clone(),
-                    WorkspaceTerminals {
-                        terminals,
-                        active_index,
-                        path: workspace_config.path.clone(),
-                    },
-                );
-            }
+            self.subscribe_to_pane_group(&pane_group, cx);
+            self.workspace_panes
+                .insert(workspace_config.id.clone(), pane_group);
         }
 
         // Set the active workspace
@@ -136,6 +150,69 @@ impl AppView {
         cx.notify();
     }
 
+    fn create_member_from_config(
+        config: &MemberConfig,
+        path: &PathBuf,
+        cx: &mut Context<PaneGroup>,
+    ) -> Member {
+        match config {
+            MemberConfig::Pane {
+                terminal_count,
+                active_index,
+            } => {
+                let pane = cx.new(|cx| {
+                    let mut pane = Pane::new(path.clone(), cx);
+                    let count = (*terminal_count).max(1);
+                    for _ in 0..count {
+                        if let Ok(terminal) = Terminal::new(path.clone()) {
+                            let terminal = Arc::new(parking_lot::Mutex::new(terminal));
+                            let terminal_view = cx.new(|cx| TerminalView::new(terminal, cx));
+                            pane.terminals.push(terminal_view);
+                        }
+                    }
+                    pane.active_index = (*active_index).min(pane.terminals.len().saturating_sub(1));
+                    pane
+                });
+                // Note: Don't subscribe here - with_root will subscribe to all panes
+                Member::Pane(pane)
+            }
+            MemberConfig::Axis {
+                axis,
+                ratios,
+                members,
+            } => {
+                let axis = match axis {
+                    config::Axis::Horizontal => Axis::Horizontal,
+                    config::Axis::Vertical => Axis::Vertical,
+                };
+                let members: Vec<Member> = members
+                    .iter()
+                    .map(|m| Self::create_member_from_config(m, path, cx))
+                    .collect();
+                Member::Axis(PaneAxis {
+                    axis,
+                    members,
+                    ratios: ratios.clone(),
+                })
+            }
+        }
+    }
+
+    fn subscribe_to_pane_group(&self, pane_group: &Entity<PaneGroup>, cx: &mut Context<Self>) {
+        cx.subscribe(pane_group, |this, _pane_group, event, cx| {
+            match event {
+                PaneGroupEvent::StateChanged
+                | PaneGroupEvent::PaneAdded(_)
+                | PaneGroupEvent::PaneRemoved(_)
+                | PaneGroupEvent::PaneFocused(_) => {
+                    this.save_state(cx);
+                    cx.notify();
+                }
+            }
+        })
+        .detach();
+    }
+
     pub fn add_workspace(&mut self, name: String, path: PathBuf, cx: &mut Context<Self>) {
         let (workspace_id, new_index) = self.workspace_manager.update(cx, |m, _| {
             m.add_workspace(name, path.clone());
@@ -143,42 +220,35 @@ impl AppView {
             (m.workspaces.last().unwrap().id.clone(), idx)
         });
 
-        if let Ok(terminal) = Terminal::new(path.clone()) {
-            let terminal = Arc::new(parking_lot::Mutex::new(terminal));
-            let terminal_view = cx.new(|cx| TerminalView::new(terminal, cx));
-            self.workspace_terminals.insert(
-                workspace_id,
-                WorkspaceTerminals {
-                    terminals: vec![terminal_view],
-                    active_index: 0,
-                    path,
-                },
-            );
-        }
+        let pane_group = cx.new(|cx| {
+            let mut group = PaneGroup::new(path.clone(), cx);
+            // Add initial terminal to the pane
+            if let Some(pane) = group.active_pane.clone() {
+                pane.update(cx, |p, cx| {
+                    p.add_terminal(cx);
+                });
+            }
+            group
+        });
+
+        self.subscribe_to_pane_group(&pane_group, cx);
+        self.workspace_panes.insert(workspace_id, pane_group);
 
         // Switch to the new workspace
         self.select_workspace(new_index, cx);
         self.save_state(cx);
     }
 
-    fn add_terminal_to_workspace(&mut self, workspace_id: &str, cx: &mut Context<Self>) {
-        if let Some(workspace_terms) = self.workspace_terminals.get_mut(workspace_id) {
-            if let Ok(terminal) = Terminal::new(workspace_terms.path.clone()) {
-                let terminal = Arc::new(parking_lot::Mutex::new(terminal));
-                let terminal_view = cx.new(|cx| TerminalView::new(terminal, cx));
-                workspace_terms.terminals.push(terminal_view);
-                workspace_terms.active_index = workspace_terms.terminals.len() - 1;
-                cx.notify();
-                self.save_state(cx);
-            }
-        }
-    }
-
-    fn select_terminal(&mut self, workspace_id: &str, index: usize, cx: &mut Context<Self>) {
-        if let Some(workspace_terms) = self.workspace_terminals.get_mut(workspace_id) {
-            if index < workspace_terms.terminals.len() {
-                workspace_terms.active_index = index;
-                cx.notify();
+    fn add_terminal_to_active_pane(&mut self, cx: &mut Context<Self>) {
+        if let Some(workspace_id) = self.active_workspace_id(cx) {
+            if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
+                pane_group.update(cx, |pg, cx| {
+                    if let Some(pane) = pg.active_pane.clone() {
+                        pane.update(cx, |p, cx| {
+                            p.add_terminal(cx);
+                        });
+                    }
+                });
                 self.save_state(cx);
             }
         }
@@ -186,13 +256,18 @@ impl AppView {
 
     pub fn next_terminal(&mut self, cx: &mut Context<Self>) {
         if let Some(workspace_id) = self.active_workspace_id(cx) {
-            if let Some(workspace_terms) = self.workspace_terminals.get_mut(&workspace_id) {
-                if workspace_terms.terminals.len() > 1 {
-                    workspace_terms.active_index =
-                        (workspace_terms.active_index + 1) % workspace_terms.terminals.len();
-                    cx.notify();
-                    self.save_state(cx);
-                }
+            if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
+                pane_group.update(cx, |pg, cx| {
+                    if let Some(pane) = pg.active_pane.clone() {
+                        pane.update(cx, |p, cx| {
+                            if p.terminals.len() > 1 {
+                                p.active_index = (p.active_index + 1) % p.terminals.len();
+                                cx.notify();
+                            }
+                        });
+                    }
+                });
+                self.save_state(cx);
             }
         }
     }
@@ -227,16 +302,53 @@ impl AppView {
 
     pub fn prev_terminal(&mut self, cx: &mut Context<Self>) {
         if let Some(workspace_id) = self.active_workspace_id(cx) {
-            if let Some(workspace_terms) = self.workspace_terminals.get_mut(&workspace_id) {
-                if workspace_terms.terminals.len() > 1 {
-                    workspace_terms.active_index = if workspace_terms.active_index == 0 {
-                        workspace_terms.terminals.len() - 1
-                    } else {
-                        workspace_terms.active_index - 1
-                    };
-                    cx.notify();
-                    self.save_state(cx);
-                }
+            if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
+                pane_group.update(cx, |pg, cx| {
+                    if let Some(pane) = pg.active_pane.clone() {
+                        pane.update(cx, |p, cx| {
+                            if p.terminals.len() > 1 {
+                                p.active_index = if p.active_index == 0 {
+                                    p.terminals.len() - 1
+                                } else {
+                                    p.active_index - 1
+                                };
+                                cx.notify();
+                            }
+                        });
+                    }
+                });
+                self.save_state(cx);
+            }
+        }
+    }
+
+    pub fn close_current_terminal(&mut self, cx: &mut Context<Self>) {
+        if let Some(workspace_id) = self.active_workspace_id(cx) {
+            if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
+                let should_close_pane = pane_group.update(cx, |pg, cx| {
+                    if let Some(pane) = pg.active_pane.clone() {
+                        let (terminals_count, should_close) = pane.update(cx, |p, cx| {
+                            let count = p.terminals.len();
+                            if count > 1 {
+                                p.terminals.remove(p.active_index);
+                                if p.active_index >= p.terminals.len() {
+                                    p.active_index = p.terminals.len() - 1;
+                                }
+                                cx.notify();
+                                (count - 1, false)
+                            } else {
+                                (count, true)
+                            }
+                        });
+
+                        // If pane has only one terminal and there are multiple panes, remove the pane
+                        if should_close && pg.pane_count() > 1 {
+                            pg.remove_pane(&pane, cx);
+                        }
+                    }
+                    false
+                });
+                self.save_state(cx);
             }
         }
     }
@@ -247,15 +359,6 @@ impl AppView {
         });
         cx.notify();
         self.save_state(cx);
-    }
-
-    fn active_terminal(&self, cx: &App) -> Option<Entity<TerminalView>> {
-        let manager = self.workspace_manager.read(cx);
-        manager.active_workspace().and_then(|w| {
-            self.workspace_terminals
-                .get(&w.id)
-                .and_then(|wt| wt.terminals.get(wt.active_index).cloned())
-        })
     }
 
     fn active_workspace_id(&self, cx: &App) -> Option<String> {
@@ -326,82 +429,17 @@ impl AppView {
             SIDEBAR_WIDTH
         }
     }
-
-    fn render_terminal_tabs(&self, cx: &Context<Self>) -> impl IntoElement {
-        let workspace_id = self.active_workspace_id(cx);
-
-        let terminal_info: Vec<(usize, bool)> = workspace_id
-            .as_ref()
-            .and_then(|id| self.workspace_terminals.get(id))
-            .map(|wt| {
-                wt.terminals
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _)| (i, i == wt.active_index))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let workspace_id_for_tabs = workspace_id.clone();
-        let workspace_id_for_add = workspace_id.clone();
-
-        div()
-            .flex()
-            .h(px(32.0))
-            .bg(rgb(0x11111b))
-            .border_b_1()
-            .border_color(rgb(0x313244))
-            .items_center()
-            .px_2()
-            .gap_1()
-            .children(terminal_info.into_iter().map(|(idx, is_active)| {
-                let ws_id = workspace_id_for_tabs.clone();
-                div()
-                    .id(ElementId::Name(format!("term-tab-{}", idx).into()))
-                    .px_3()
-                    .py_1()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .when(is_active, |el| el.bg(rgb(0x1e1e2e)))
-                    .when(!is_active, |el| el.hover(|el| el.bg(rgb(0x313244))))
-                    .text_color(if is_active {
-                        rgb(0xcdd6f4)
-                    } else {
-                        rgb(0x6c7086)
-                    })
-                    .text_xs()
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        if let Some(ref id) = ws_id {
-                            this.select_terminal(id, idx, cx);
-                        }
-                    }))
-                    .child(format!("Terminal {}", idx + 1))
-            }))
-            .child(
-                div()
-                    .id("add-terminal")
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .cursor_pointer()
-                    .hover(|el| el.bg(rgb(0x313244)))
-                    .text_color(rgb(0x6c7086))
-                    .text_xs()
-                    .on_click(cx.listener(move |this, _, _window, cx| {
-                        if let Some(ref id) = workspace_id_for_add {
-                            this.add_terminal_to_workspace(id, cx);
-                        }
-                    }))
-                    .child("+"),
-            )
-    }
 }
 
 const TITLE_BAR_HEIGHT: f32 = 38.0;
 
 impl Render for AppView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_terminal = self.active_terminal(cx);
+        let workspace_id = self.active_workspace_id(cx);
+        let pane_group = workspace_id
+            .as_ref()
+            .and_then(|id| self.workspace_panes.get(id))
+            .cloned();
 
         let focus_handle = self.focus_handle.clone();
 
@@ -432,7 +470,7 @@ impl Render for AppView {
                         div()
                             .text_sm()
                             .text_color(rgb(0x6c7086))
-                            .child("August")
+                            .child(config::APP_NAME)
                     )
             )
             // Main content area
@@ -453,10 +491,9 @@ impl Render for AppView {
                             .min_w_0()
                             .flex()
                             .flex_col()
-                            .child(self.render_terminal_tabs(cx))
                             .child(
                                 div()
-                                    .id("terminal-container")
+                                    .id("pane-container")
                                     .flex_1()
                                     .w_full()
                                     .min_h_0()
@@ -464,8 +501,8 @@ impl Render for AppView {
                                     .flex_col()
                                     .overflow_hidden()
                                     .map(|el| {
-                                        if let Some(terminal) = active_terminal {
-                                            el.child(terminal)
+                                        if let Some(pg) = pane_group {
+                                            el.child(pg)
                                         } else {
                                             el
                                         }
