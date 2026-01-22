@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+pub const APP_NAME: &str = if cfg!(debug_assertions) {
+    "August (Dev)"
+} else {
+    "August"
+};
+
+pub const APP_ID: &str = if cfg!(debug_assertions) {
+    "com.august.app.dev"
+} else {
+    "com.august.app"
+};
+
 #[derive(Serialize, Deserialize, Default)]
 pub struct AppState {
     pub workspaces: Vec<WorkspaceConfig>,
@@ -18,9 +30,14 @@ pub struct WorkspaceConfig {
 }
 
 pub fn config_dir() -> PathBuf {
+    let folder = if cfg!(debug_assertions) {
+        "August-Dev"
+    } else {
+        "August"
+    };
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("August")
+        .join(folder)
 }
 
 pub fn config_path() -> PathBuf {

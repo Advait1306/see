@@ -6,16 +6,64 @@ use std::path::Path;
 use std::process::Command;
 
 const APP_NAME: &str = "August";
+const APP_NAME_DEV: &str = "August (Dev)";
+const BUNDLE_ID_DEV: &str = "com.august.app.dev";
 const SIGNING_IDENTITY: &str = "Developer ID Application: Advait Bansode (N8K96VJAHS)";
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
     match args.get(1).map(|s| s.as_str()) {
+        Some("dev") => dev()?,
         Some("release") => release()?,
         Some(cmd) => bail!("Unknown command: {}", cmd),
-        None => bail!("Usage: cargo xtask release"),
+        None => bail!("Usage: cargo xtask [dev|release]"),
     }
+
+    Ok(())
+}
+
+fn dev() -> Result<()> {
+    let project_root = project_root()?;
+    env::set_current_dir(&project_root)?;
+
+    let bundle_path = project_root.join(format!("target/debug/bundle/osx/{}.app", APP_NAME));
+
+    println!("==> Building {} (dev)...", APP_NAME);
+    run_command("cargo", &["bundle"])?;
+
+    // Replace icon with dev icon
+    println!("==> Applying dev configuration...");
+    let dev_icon = project_root.join("assets/icon-dev.icns");
+    let bundle_icon = bundle_path.join("Contents/Resources/icon.icns");
+    fs::copy(&dev_icon, &bundle_icon)?;
+
+    // Update Info.plist with dev name and identifier
+    let plist_path = bundle_path.join("Contents/Info.plist");
+    let plist_content = fs::read_to_string(&plist_path)?;
+    let plist_content = plist_content
+        .replace(
+            "<string>August</string>",
+            &format!("<string>{}</string>", APP_NAME_DEV),
+        )
+        .replace(
+            "<string>com.august.app</string>",
+            &format!("<string>{}</string>", BUNDLE_ID_DEV),
+        );
+    fs::write(&plist_path, plist_content)?;
+
+    // Ad-hoc sign for local use
+    println!("==> Signing (ad-hoc)...");
+    run_command("codesign", &[
+        "--force",
+        "--deep",
+        "--sign", "-",
+        bundle_path.to_str().unwrap(),
+    ])?;
+
+    println!("==> Launching {}...", APP_NAME_DEV);
+    let executable = bundle_path.join("Contents/MacOS/august");
+    run_command(executable.to_str().unwrap(), &[])?;
 
     Ok(())
 }
