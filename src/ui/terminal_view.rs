@@ -3,7 +3,8 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as AlacPoint, Side};
 use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::cell::Flags as CellFlags;
-use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
+use alacritty_terminal::term::TermMode;
+use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape as AlacCursorShape, NamedColor};
 use gpui::prelude::*;
 use gpui::*;
 use std::sync::Arc;
@@ -59,8 +60,8 @@ fn ansi_to_hsla(color: AnsiColor) -> Option<Hsla> {
                 NamedColor::BrightMagenta => 13,
                 NamedColor::BrightCyan => 14,
                 NamedColor::BrightWhite => 15,
-                NamedColor::Foreground => return None,
-                NamedColor::Background => return None,
+                NamedColor::Foreground => return Some(default_fg()),
+                NamedColor::Background => return Some(default_bg()),
                 _ => return None,
             };
             let (r, g, b) = ANSI_COLORS[idx];
@@ -85,14 +86,10 @@ fn ansi_to_hsla(color: AnsiColor) -> Option<Hsla> {
     }
 }
 
-use crate::ui::app_view::SIDEBAR_WIDTH;
-
 // Terminal dimensions
 const CELL_WIDTH: f32 = 7.8;
 const CELL_HEIGHT: f32 = 18.0;
 const PADDING: f32 = 8.0;
-const TERMINAL_TAB_HEIGHT: f32 = 32.0;
-const TITLE_BAR_HEIGHT: f32 = 38.0;
 
 // Default colors
 fn default_fg() -> Hsla {
@@ -117,6 +114,145 @@ fn selection_color() -> Hsla {
         s: 0.60,
         l: 0.55,
         a: 0.35,
+    }
+}
+
+/// Helper struct for converting between Alacritty's cursor points and screen coordinates
+struct DisplayCursor {
+    line: i32,
+    col: usize,
+}
+
+impl DisplayCursor {
+    fn from(cursor_point: AlacPoint, display_offset: usize) -> Self {
+        Self {
+            line: cursor_point.line.0 + display_offset as i32,
+            col: cursor_point.column.0,
+        }
+    }
+
+    fn line(&self) -> i32 {
+        self.line
+    }
+
+    fn col(&self) -> usize {
+        self.col
+    }
+}
+
+/// Cursor shape for rendering
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CursorShape {
+    Block,
+    Underline,
+    Bar,
+    Hollow,
+}
+
+/// Layout information for cursor rendering
+struct CursorLayout {
+    origin: gpui::Point<Pixels>,
+    block_width: Pixels,
+    line_height: Pixels,
+    color: Hsla,
+    shape: CursorShape,
+    cursor_char: Option<char>,
+}
+
+impl CursorLayout {
+    fn new(
+        origin: gpui::Point<Pixels>,
+        block_width: Pixels,
+        line_height: Pixels,
+        color: Hsla,
+        shape: CursorShape,
+        cursor_char: Option<char>,
+    ) -> Self {
+        Self {
+            origin,
+            block_width,
+            line_height,
+            color,
+            shape,
+            cursor_char,
+        }
+    }
+
+    fn bounds(&self, content_origin: gpui::Point<Pixels>) -> Bounds<Pixels> {
+        let origin = self.origin + content_origin;
+        match self.shape {
+            CursorShape::Bar => Bounds {
+                origin,
+                size: Size {
+                    width: px(2.0),
+                    height: self.line_height,
+                },
+            },
+            CursorShape::Block | CursorShape::Hollow => Bounds {
+                origin,
+                size: Size {
+                    width: self.block_width,
+                    height: self.line_height,
+                },
+            },
+            CursorShape::Underline => Bounds {
+                origin: origin + gpui::point(Pixels::ZERO, self.line_height - px(2.0)),
+                size: Size {
+                    width: self.block_width,
+                    height: px(2.0),
+                },
+            },
+        }
+    }
+
+    fn paint(&self, content_origin: gpui::Point<Pixels>, window: &mut Window, cx: &mut App) {
+        let bounds = self.bounds(content_origin);
+
+        // Draw cursor shape
+        if matches!(self.shape, CursorShape::Hollow) {
+            // Hollow cursor: just an outline
+            window.paint_quad(outline(bounds, self.color, BorderStyle::Solid));
+        } else {
+            // Filled cursor
+            window.paint_quad(fill(bounds, self.color));
+        }
+
+        // For block cursor, draw the character on top with inverted colors
+        if self.shape == CursorShape::Block {
+            if let Some(c) = self.cursor_char {
+                if c != ' ' && c != '\0' {
+                    let font = Font {
+                        family: "Paper Mono".into(),
+                        features: FontFeatures::default(),
+                        fallbacks: None,
+                        weight: FontWeight::NORMAL,
+                        style: FontStyle::Normal,
+                    };
+
+                    let text_run = TextRun {
+                        len: c.len_utf8(),
+                        font,
+                        color: default_bg(),
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    };
+
+                    let shaped = window.text_system().shape_line(
+                        c.to_string().into(),
+                        px(13.0),
+                        &[text_run],
+                        Some(self.block_width),
+                    );
+                    let _ = shaped.paint(
+                        self.origin + content_origin,
+                        self.line_height,
+                        window,
+                        cx,
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -283,10 +419,9 @@ pub struct TerminalView {
     terminal: Arc<parking_lot::Mutex<Terminal>>,
     focus_handle: FocusHandle,
     scroll_accumulator: f32,
-    last_size: Option<(u16, u16)>,
-    bounds_observer_set: bool,
     selection_phase: SelectionPhase,
     content_bounds: Arc<parking_lot::Mutex<Option<Bounds<Pixels>>>>,
+    last_size: Arc<parking_lot::Mutex<Option<(u16, u16)>>>,
 }
 
 impl TerminalView {
@@ -317,25 +452,9 @@ impl TerminalView {
             terminal,
             focus_handle: cx.focus_handle(),
             scroll_accumulator: 0.0,
-            last_size: None,
-            bounds_observer_set: false,
             selection_phase: SelectionPhase::None,
             content_bounds: Arc::new(parking_lot::Mutex::new(None)),
-        }
-    }
-
-    fn do_resize(&mut self, window: &Window) {
-        let viewport = window.viewport_size();
-        // Account for sidebar width, title bar, and terminal tab height
-        let available_width = f32::from(viewport.width) - SIDEBAR_WIDTH - (PADDING * 2.0);
-        let available_height = f32::from(viewport.height) - TITLE_BAR_HEIGHT - TERMINAL_TAB_HEIGHT - (PADDING * 2.0);
-        let cols = (available_width / CELL_WIDTH).floor().max(1.0) as u16;
-        let rows = (available_height / CELL_HEIGHT).floor().max(1.0) as u16;
-
-        let new_size = (cols, rows);
-        if self.last_size != Some(new_size) {
-            self.last_size = Some(new_size);
-            self.terminal.lock().resize(cols, rows, CELL_WIDTH as u16, CELL_HEIGHT as u16);
+            last_size: Arc::new(parking_lot::Mutex::new(None)),
         }
     }
 }
@@ -344,17 +463,6 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let is_focused = focus_handle.is_focused(window);
-
-        // Set up bounds observer on first render
-        if !self.bounds_observer_set {
-            self.bounds_observer_set = true;
-            self.do_resize(window);
-            cx.observe_window_bounds(window, |this: &mut Self, window, cx| {
-                this.do_resize(window);
-                cx.notify();
-            })
-            .detach();
-        }
 
         // Extract terminal content for the element
         let terminal = self.terminal.clone();
@@ -383,9 +491,11 @@ impl Render for TerminalView {
                     return;
                 }
 
-                let input = key_to_input(event);
+                let terminal = this.terminal.lock();
+                let mode = terminal.mode();
+                let input = key_to_input(event, &mode);
                 if !input.is_empty() {
-                    this.terminal.lock().write(input.as_bytes());
+                    terminal.write(input.as_bytes());
                     cx.notify();
                 }
             }))
@@ -480,6 +590,7 @@ impl Render for TerminalView {
                 terminal,
                 is_focused,
                 bounds_out: self.content_bounds.clone(),
+                last_size: self.last_size.clone(),
             })
     }
 }
@@ -495,6 +606,7 @@ struct TerminalElement {
     terminal: Arc<parking_lot::Mutex<Terminal>>,
     is_focused: bool,
     bounds_out: Arc<parking_lot::Mutex<Option<Bounds<Pixels>>>>,
+    last_size: Arc<parking_lot::Mutex<Option<(u16, u16)>>>,
 }
 
 /// Represents a selection range on a single line
@@ -506,7 +618,7 @@ struct SelectionLineRange {
 
 struct TerminalLayoutState {
     text_runs: Vec<BatchedTextRun>,
-    cursor_rect: Option<BackgroundRect>,
+    cursor: Option<CursorLayout>,
     selection_ranges: Vec<SelectionLineRange>,
 }
 
@@ -556,18 +668,90 @@ impl Element for TerminalElement {
         // Store bounds for mouse event coordinate conversion
         *self.bounds_out.lock() = Some(bounds);
 
+        // Calculate terminal size from actual element bounds
+        let available_width = f32::from(bounds.size.width) - (PADDING * 2.0);
+        let available_height = f32::from(bounds.size.height) - (PADDING * 2.0);
+        let cols = (available_width / CELL_WIDTH).floor().max(1.0) as u16;
+        let rows = (available_height / CELL_HEIGHT).floor().max(1.0) as u16;
+        let new_size = (cols, rows);
+
+        // Resize terminal if size changed
+        {
+            let mut last_size = self.last_size.lock();
+            if *last_size != Some(new_size) {
+                *last_size = Some(new_size);
+                self.terminal.lock().resize(cols, rows, CELL_WIDTH as u16, CELL_HEIGHT as u16);
+            }
+        }
+
         let terminal = self.terminal.lock();
         let mut text_runs: Vec<BatchedTextRun> = Vec::new();
-        let mut cursor_rect: Option<BackgroundRect> = None;
+        let mut cursor: Option<CursorLayout> = None;
         let mut selection_ranges: Vec<SelectionLineRange> = Vec::new();
 
         terminal.with_term(|term| {
             let grid = term.grid();
             let cols = grid.columns();
             let content = term.renderable_content();
-            let display_offset = content.display_offset as i32;
-            let cursor_point = content.cursor.point;
+            let display_offset = content.display_offset;
+            let alac_cursor = &content.cursor;
             let screen_lines = grid.screen_lines();
+
+            // Convert cursor position to screen coordinates using DisplayCursor
+            let display_cursor = DisplayCursor::from(alac_cursor.point, display_offset);
+            let cursor_screen_line = display_cursor.line();
+            let cursor_col = display_cursor.col();
+
+            // Only show cursor if it's within visible screen and not hidden
+            // Note: Don't check >= 0 as cursor_screen_line is i32 and negative values
+            // will wrap to large usize values that fail the < screen_lines check anyway
+            if (cursor_screen_line as usize) < screen_lines
+                && !matches!(alac_cursor.shape, AlacCursorShape::Hidden)
+            {
+                // Determine cursor shape based on focus and alacritty shape
+                let shape = if !self.is_focused {
+                    CursorShape::Hollow
+                } else {
+                    match alac_cursor.shape {
+                        AlacCursorShape::Block => CursorShape::Block,
+                        AlacCursorShape::Underline => CursorShape::Underline,
+                        AlacCursorShape::Beam => CursorShape::Bar,
+                        AlacCursorShape::HollowBlock => CursorShape::Hollow,
+                        AlacCursorShape::Hidden => CursorShape::Block, // Won't reach here
+                    }
+                };
+
+                let cursor_color = if self.is_focused {
+                    cursor_color()
+                } else {
+                    cursor_unfocused_color()
+                };
+
+                // Get the character under the cursor for block cursor text rendering
+                let cursor_char = if shape == CursorShape::Block {
+                    let grid_line = alac_cursor.point.line;
+                    let cell = &grid[grid_line][Column(cursor_col)];
+                    let c = cell.c;
+                    if c != '\0' && c != ' ' { Some(c) } else { None }
+                } else {
+                    None
+                };
+
+                // Calculate pixel position for cursor
+                let cursor_origin = gpui::point(
+                    px(cursor_col as f32 * CELL_WIDTH),
+                    px(cursor_screen_line as f32 * CELL_HEIGHT),
+                );
+
+                cursor = Some(CursorLayout::new(
+                    cursor_origin,
+                    px(CELL_WIDTH),
+                    px(CELL_HEIGHT),
+                    cursor_color,
+                    shape,
+                    cursor_char,
+                ));
+            }
 
             // Extract selection ranges from the terminal
             if let Some(ref selection) = term.selection {
@@ -577,7 +761,7 @@ impl Element for TerminalElement {
 
                     // Iterate through visible lines and extract selection ranges
                     for line_idx in 0..screen_lines {
-                        let grid_line = Line(line_idx as i32 - display_offset);
+                        let grid_line = Line(line_idx as i32 - display_offset as i32);
 
                         // Check if this line is within the selection
                         if grid_line.0 < start.line.0 || grid_line.0 > end.line.0 {
@@ -606,7 +790,7 @@ impl Element for TerminalElement {
             }
 
             for line_idx in 0..screen_lines {
-                let grid_line = Line(line_idx as i32 - display_offset);
+                let grid_line = Line(line_idx as i32 - display_offset as i32);
                 let row = &grid[grid_line];
                 let mut current_run: Option<BatchedTextRun> = None;
 
@@ -618,35 +802,42 @@ impl Element for TerminalElement {
                     }
 
                     let c = if cell.c == '\0' { ' ' } else { cell.c };
-                    let is_cursor = display_offset == 0
-                        && cursor_point.line.0 == line_idx as i32
-                        && cursor_point.column.0 == col_idx;
 
-                    let (fg, bg) = if is_cursor {
-                        // Cursor: inverted colors
-                        let cursor_bg = if self.is_focused {
-                            cursor_color()
-                        } else {
-                            cursor_unfocused_color()
-                        };
-                        cursor_rect = Some(BackgroundRect {
-                            line: line_idx as i32,
-                            col: col_idx,
-                            cell_count: 1,
-                            color: cursor_bg,
-                        });
-                        (default_bg(), None) // Text on cursor is dark
-                    } else {
-                        let fg = ansi_to_hsla(cell.fg).unwrap_or_else(default_fg);
-                        let bg = ansi_to_hsla(cell.bg);
+                    // Check if this is the cursor position
+                    let is_block_cursor = cursor_screen_line == line_idx as i32
+                        && cursor_col == col_idx
+                        && cursor.as_ref().map_or(false, |c| c.shape == CursorShape::Block);
+
+                    // For block cursor, skip rendering this character (CursorLayout handles it)
+                    // For other cursor shapes, render normally
+                    let (fg, bg) = {
+                        let mut fg = cell.fg;
+                        let mut bg = cell.bg;
+
+                        // Handle INVERSE flag - swap foreground and background colors
+                        // This is how TUI apps like Claude Code render their own cursor
+                        if cell.flags.contains(CellFlags::INVERSE) {
+                            std::mem::swap(&mut fg, &mut bg);
+                        }
+
+                        let fg = ansi_to_hsla(fg).unwrap_or_else(default_fg);
+                        let bg = ansi_to_hsla(bg);
                         (fg, bg)
                     };
 
                     let bold = cell.flags.contains(CellFlags::BOLD);
 
+                    // Skip rendering at block cursor position (CursorLayout handles it)
+                    if is_block_cursor {
+                        if let Some(run) = current_run.take() {
+                            text_runs.push(run);
+                        }
+                        continue;
+                    }
+
                     // Try to extend current run or start a new one
                     if let Some(ref mut run) = current_run {
-                        if run.can_append(fg, bg, bold) && !is_cursor {
+                        if run.can_append(fg, bg, bold) {
                             run.append(c);
                         } else {
                             text_runs.push(current_run.take().unwrap());
@@ -663,7 +854,7 @@ impl Element for TerminalElement {
             }
         });
 
-        TerminalLayoutState { text_runs, cursor_rect, selection_ranges }
+        TerminalLayoutState { text_runs, cursor, selection_ranges }
     }
 
     fn paint(
@@ -701,21 +892,22 @@ impl Element for TerminalElement {
             window.paint_quad(fill(bounds, selection_bg));
         }
 
-        // Paint cursor background
-        if let Some(ref cursor) = layout.cursor_rect {
-            cursor.paint(origin, cell_width, line_height, window);
-        }
-
         // Paint text runs
         for run in &layout.text_runs {
             run.paint(origin, cell_width, line_height, window, cx);
         }
+
+        // Paint cursor (after text so it appears on top)
+        if let Some(ref cursor) = layout.cursor {
+            cursor.paint(origin, window, cx);
+        }
     }
 }
 
-fn key_to_input(event: &KeyDownEvent) -> String {
+fn key_to_input(event: &KeyDownEvent, mode: &TermMode) -> String {
     let key = &event.keystroke.key;
     let modifiers = &event.keystroke;
+    let app_cursor = mode.contains(TermMode::APP_CURSOR);
 
     if modifiers.modifiers.control {
         if key.len() == 1 {
@@ -728,6 +920,7 @@ fn key_to_input(event: &KeyDownEvent) -> String {
     }
 
     // Handle special keys first
+    // Arrow keys and cursor keys change based on APP_CURSOR mode
     match key.as_str() {
         "enter" => return "\r".to_string(),
         "backspace" => {
@@ -737,19 +930,67 @@ fn key_to_input(event: &KeyDownEvent) -> String {
             }
             return "\x7f".to_string();
         }
-        "tab" => return "\t".to_string(),
+        "tab" => {
+            if modifiers.modifiers.shift {
+                return "\x1b[Z".to_string();
+            }
+            return "\t".to_string();
+        }
         "escape" => return "\x1b".to_string(),
-        "up" => return "\x1b[A".to_string(),
-        "down" => return "\x1b[B".to_string(),
-        "right" => return "\x1b[C".to_string(),
-        "left" => return "\x1b[D".to_string(),
-        "home" => return "\x1b[H".to_string(),
-        "end" => return "\x1b[F".to_string(),
+        "up" => {
+            if app_cursor {
+                return "\x1bOA".to_string();
+            }
+            return "\x1b[A".to_string();
+        }
+        "down" => {
+            if app_cursor {
+                return "\x1bOB".to_string();
+            }
+            return "\x1b[B".to_string();
+        }
+        "right" => {
+            if app_cursor {
+                return "\x1bOC".to_string();
+            }
+            return "\x1b[C".to_string();
+        }
+        "left" => {
+            if app_cursor {
+                return "\x1bOD".to_string();
+            }
+            return "\x1b[D".to_string();
+        }
+        "home" => {
+            if app_cursor {
+                return "\x1bOH".to_string();
+            }
+            return "\x1b[H".to_string();
+        }
+        "end" => {
+            if app_cursor {
+                return "\x1bOF".to_string();
+            }
+            return "\x1b[F".to_string();
+        }
         "pageup" => return "\x1b[5~".to_string(),
         "pagedown" => return "\x1b[6~".to_string(),
         "delete" => return "\x1b[3~".to_string(),
         "insert" => return "\x1b[2~".to_string(),
         "space" => return " ".to_string(),
+        // Function keys
+        "f1" => return "\x1bOP".to_string(),
+        "f2" => return "\x1bOQ".to_string(),
+        "f3" => return "\x1bOR".to_string(),
+        "f4" => return "\x1bOS".to_string(),
+        "f5" => return "\x1b[15~".to_string(),
+        "f6" => return "\x1b[17~".to_string(),
+        "f7" => return "\x1b[18~".to_string(),
+        "f8" => return "\x1b[19~".to_string(),
+        "f9" => return "\x1b[20~".to_string(),
+        "f10" => return "\x1b[21~".to_string(),
+        "f11" => return "\x1b[23~".to_string(),
+        "f12" => return "\x1b[24~".to_string(),
         _ => {}
     }
 

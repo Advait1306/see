@@ -3,6 +3,7 @@ use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Point as AlacPoint, Side};
+use alacritty_terminal::term::TermMode;
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::test::TermSize;
@@ -195,5 +196,10 @@ impl Terminal {
     pub fn display_offset(&self) -> usize {
         let term = self.term.lock();
         term.grid().display_offset()
+    }
+
+    pub fn mode(&self) -> TermMode {
+        let term = self.term.lock();
+        *term.mode()
     }
 }
