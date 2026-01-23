@@ -2,6 +2,8 @@ use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
 use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::{Point as AlacPoint, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term};
@@ -159,5 +161,39 @@ impl Terminal {
     pub fn scroll(&self, delta: i32) {
         let mut term = self.term.lock();
         term.scroll_display(Scroll::Delta(delta));
+    }
+
+    pub fn start_selection(&self, selection_type: SelectionType, point: AlacPoint, side: Side) {
+        let mut term = self.term.lock();
+        let selection = Selection::new(selection_type, point, side);
+        term.selection = Some(selection);
+    }
+
+    pub fn update_selection(&self, point: AlacPoint, side: Side) {
+        let mut term = self.term.lock();
+        if let Some(mut selection) = term.selection.take() {
+            selection.update(point, side);
+            term.selection = Some(selection);
+        }
+    }
+
+    pub fn clear_selection(&self) {
+        let mut term = self.term.lock();
+        term.selection = None;
+    }
+
+    pub fn has_selection(&self) -> bool {
+        let term = self.term.lock();
+        term.selection.is_some()
+    }
+
+    pub fn selection_to_string(&self) -> Option<String> {
+        let term = self.term.lock();
+        term.selection_to_string()
+    }
+
+    pub fn display_offset(&self) -> usize {
+        let term = self.term.lock();
+        term.grid().display_offset()
     }
 }

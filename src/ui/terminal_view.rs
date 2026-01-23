@@ -1,6 +1,7 @@
 use crate::terminal::Terminal;
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::index::{Column, Line, Point as AlacPoint, Side};
+use alacritty_terminal::selection::SelectionType;
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
 use gpui::prelude::*;
@@ -108,6 +109,69 @@ fn cursor_color() -> Hsla {
 
 fn cursor_unfocused_color() -> Hsla {
     rgb_color(0x6c, 0x70, 0x86)
+}
+
+fn selection_color() -> Hsla {
+    Hsla {
+        h: 0.62,
+        s: 0.60,
+        l: 0.55,
+        a: 0.35,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SelectionPhase {
+    None,
+    Selecting,
+    Ended,
+}
+
+/// Convert pixel position to grid point and side
+fn pixel_to_grid_point(
+    position: gpui::Point<Pixels>,
+    origin: gpui::Point<Pixels>,
+    cols: usize,
+    rows: usize,
+    display_offset: usize,
+) -> (AlacPoint, Side) {
+    // Adjust for padding
+    let x = f32::from(position.x - origin.x - px(PADDING));
+    let y = f32::from(position.y - origin.y - px(PADDING));
+
+    // Calculate column
+    let mut col = (x / CELL_WIDTH) as i32;
+    let cell_x = if x >= 0.0 { x % CELL_WIDTH } else { 0.0 };
+    let half_cell_width = CELL_WIDTH / 2.0;
+    let mut side = if cell_x > half_cell_width {
+        Side::Right
+    } else {
+        Side::Left
+    };
+
+    // Clamp column
+    if col < 0 {
+        col = 0;
+        side = Side::Left;
+    } else if col >= cols as i32 {
+        col = (cols - 1) as i32;
+        side = Side::Right;
+    }
+
+    // Calculate line
+    let mut line = (y / CELL_HEIGHT) as i32;
+    if line < 0 {
+        line = 0;
+        side = Side::Left;
+    } else if line >= rows as i32 {
+        line = (rows - 1) as i32;
+        side = Side::Right;
+    }
+
+    (
+        AlacPoint::new(Line(line - display_offset as i32), Column(col as usize)),
+        side,
+    )
 }
 
 // Batched text run - combines consecutive characters with same style
@@ -221,6 +285,8 @@ pub struct TerminalView {
     scroll_accumulator: f32,
     last_size: Option<(u16, u16)>,
     bounds_observer_set: bool,
+    selection_phase: SelectionPhase,
+    content_bounds: Arc<parking_lot::Mutex<Option<Bounds<Pixels>>>>,
 }
 
 impl TerminalView {
@@ -253,6 +319,8 @@ impl TerminalView {
             scroll_accumulator: 0.0,
             last_size: None,
             bounds_observer_set: false,
+            selection_phase: SelectionPhase::None,
+            content_bounds: Arc::new(parking_lot::Mutex::new(None)),
         }
     }
 
@@ -296,14 +364,69 @@ impl Render for TerminalView {
             .key_context("Terminal")
             .track_focus(&focus_handle)
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _window, cx| {
+                // Handle Cmd+C for copy
+                if event.keystroke.modifiers.platform && event.keystroke.key == "c" {
+                    if let Some(text) = this.terminal.lock().selection_to_string() {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    }
+                    return;
+                }
+
+                // Handle Cmd+V for paste
+                if event.keystroke.modifiers.platform && event.keystroke.key == "v" {
+                    if let Some(item) = cx.read_from_clipboard() {
+                        if let Some(text) = item.text() {
+                            this.terminal.lock().write(text.as_bytes());
+                            cx.notify();
+                        }
+                    }
+                    return;
+                }
+
                 let input = key_to_input(event);
                 if !input.is_empty() {
                     this.terminal.lock().write(input.as_bytes());
                     cx.notify();
                 }
             }))
-            .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, window, cx| {
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, event: &MouseDownEvent, window, cx| {
                 cx.focus_self(window);
+
+                let Some(bounds) = *this.content_bounds.lock() else { return };
+                let terminal = this.terminal.lock();
+                let (cols, rows, display_offset) = terminal.with_term(|term| {
+                    (term.grid().columns(), term.grid().screen_lines(), term.grid().display_offset())
+                });
+
+                let (point, side) = pixel_to_grid_point(
+                    event.position,
+                    bounds.origin,
+                    cols,
+                    rows,
+                    display_offset,
+                );
+
+                let selection_type = match event.click_count {
+                    0 => return, // Release
+                    1 => SelectionType::Simple,
+                    2 => SelectionType::Semantic,
+                    3 => SelectionType::Lines,
+                    _ => return,
+                };
+
+                // Shift+click extends selection
+                if selection_type == SelectionType::Simple && event.modifiers.shift {
+                    if terminal.has_selection() {
+                        terminal.update_selection(point, side);
+                        this.selection_phase = SelectionPhase::Selecting;
+                        cx.notify();
+                        return;
+                    }
+                }
+
+                terminal.start_selection(selection_type, point, side);
+                this.selection_phase = SelectionPhase::Selecting;
+                cx.notify();
             }))
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
                 let pixel_delta = match event.delta {
@@ -320,10 +443,43 @@ impl Render for TerminalView {
                     cx.notify();
                 }
             }))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                // Only update selection while dragging with left mouse button
+                if this.selection_phase != SelectionPhase::Selecting {
+                    return;
+                }
+                if event.pressed_button != Some(MouseButton::Left) {
+                    return;
+                }
+
+                let Some(bounds) = *this.content_bounds.lock() else { return };
+                let terminal = this.terminal.lock();
+                let (cols, rows, display_offset) = terminal.with_term(|term| {
+                    (term.grid().columns(), term.grid().screen_lines(), term.grid().display_offset())
+                });
+
+                let (point, side) = pixel_to_grid_point(
+                    event.position,
+                    bounds.origin,
+                    cols,
+                    rows,
+                    display_offset,
+                );
+
+                terminal.update_selection(point, side);
+                cx.notify();
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _event: &MouseUpEvent, _, cx| {
+                if this.selection_phase == SelectionPhase::Selecting {
+                    this.selection_phase = SelectionPhase::Ended;
+                    cx.notify();
+                }
+            }))
             .size_full()
             .child(TerminalElement {
                 terminal,
                 is_focused,
+                bounds_out: self.content_bounds.clone(),
             })
     }
 }
@@ -338,11 +494,20 @@ impl Focusable for TerminalView {
 struct TerminalElement {
     terminal: Arc<parking_lot::Mutex<Terminal>>,
     is_focused: bool,
+    bounds_out: Arc<parking_lot::Mutex<Option<Bounds<Pixels>>>>,
+}
+
+/// Represents a selection range on a single line
+struct SelectionLineRange {
+    line: i32,
+    start_col: usize,
+    end_col: usize,
 }
 
 struct TerminalLayoutState {
     text_runs: Vec<BatchedTextRun>,
     cursor_rect: Option<BackgroundRect>,
+    selection_ranges: Vec<SelectionLineRange>,
 }
 
 impl IntoElement for TerminalElement {
@@ -388,9 +553,13 @@ impl Element for TerminalElement {
         _window: &mut Window,
         _cx: &mut App,
     ) -> Self::PrepaintState {
+        // Store bounds for mouse event coordinate conversion
+        *self.bounds_out.lock() = Some(bounds);
+
         let terminal = self.terminal.lock();
         let mut text_runs: Vec<BatchedTextRun> = Vec::new();
         let mut cursor_rect: Option<BackgroundRect> = None;
+        let mut selection_ranges: Vec<SelectionLineRange> = Vec::new();
 
         terminal.with_term(|term| {
             let grid = term.grid();
@@ -398,8 +567,45 @@ impl Element for TerminalElement {
             let content = term.renderable_content();
             let display_offset = content.display_offset as i32;
             let cursor_point = content.cursor.point;
+            let screen_lines = grid.screen_lines();
 
-            for line_idx in 0..grid.screen_lines() {
+            // Extract selection ranges from the terminal
+            if let Some(ref selection) = term.selection {
+                if let Some(range) = selection.to_range(term) {
+                    let start = range.start;
+                    let end = range.end;
+
+                    // Iterate through visible lines and extract selection ranges
+                    for line_idx in 0..screen_lines {
+                        let grid_line = Line(line_idx as i32 - display_offset);
+
+                        // Check if this line is within the selection
+                        if grid_line.0 < start.line.0 || grid_line.0 > end.line.0 {
+                            continue;
+                        }
+
+                        let start_col = if grid_line.0 == start.line.0 {
+                            start.column.0
+                        } else {
+                            0
+                        };
+
+                        let end_col = if grid_line.0 == end.line.0 {
+                            end.column.0
+                        } else {
+                            cols - 1
+                        };
+
+                        selection_ranges.push(SelectionLineRange {
+                            line: line_idx as i32,
+                            start_col,
+                            end_col,
+                        });
+                    }
+                }
+            }
+
+            for line_idx in 0..screen_lines {
                 let grid_line = Line(line_idx as i32 - display_offset);
                 let row = &grid[grid_line];
                 let mut current_run: Option<BatchedTextRun> = None;
@@ -457,7 +663,7 @@ impl Element for TerminalElement {
             }
         });
 
-        TerminalLayoutState { text_runs, cursor_rect }
+        TerminalLayoutState { text_runs, cursor_rect, selection_ranges }
     }
 
     fn paint(
@@ -476,6 +682,24 @@ impl Element for TerminalElement {
 
         // Paint background
         window.paint_quad(fill(bounds, default_bg()));
+
+        // Paint selection highlights (before text so it appears behind)
+        let selection_bg = selection_color();
+        for range in &layout.selection_ranges {
+            let pos = gpui::Point::new(
+                origin.x + px(range.start_col as f32 * CELL_WIDTH),
+                origin.y + px(range.line as f32 * CELL_HEIGHT),
+            );
+            let width = ((range.end_col - range.start_col + 1) as f32) * CELL_WIDTH;
+            let bounds = Bounds::new(
+                pos,
+                Size {
+                    width: px(width),
+                    height: line_height,
+                },
+            );
+            window.paint_quad(fill(bounds, selection_bg));
+        }
 
         // Paint cursor background
         if let Some(ref cursor) = layout.cursor_rect {
@@ -503,23 +727,43 @@ fn key_to_input(event: &KeyDownEvent) -> String {
         }
     }
 
+    // Handle special keys first
     match key.as_str() {
-        "enter" => "\r".to_string(),
-        "backspace" => "\x7f".to_string(),
-        "tab" => "\t".to_string(),
-        "escape" => "\x1b".to_string(),
-        "up" => "\x1b[A".to_string(),
-        "down" => "\x1b[B".to_string(),
-        "right" => "\x1b[C".to_string(),
-        "left" => "\x1b[D".to_string(),
-        "home" => "\x1b[H".to_string(),
-        "end" => "\x1b[F".to_string(),
-        "pageup" => "\x1b[5~".to_string(),
-        "pagedown" => "\x1b[6~".to_string(),
-        "delete" => "\x1b[3~".to_string(),
-        "insert" => "\x1b[2~".to_string(),
-        "space" => " ".to_string(),
-        _ if key.len() == 1 => key.clone(),
-        _ => String::new(),
+        "enter" => return "\r".to_string(),
+        "backspace" => {
+            // Option+Backspace deletes word (send ESC + DEL)
+            if modifiers.modifiers.alt {
+                return "\x1b\x7f".to_string();
+            }
+            return "\x7f".to_string();
+        }
+        "tab" => return "\t".to_string(),
+        "escape" => return "\x1b".to_string(),
+        "up" => return "\x1b[A".to_string(),
+        "down" => return "\x1b[B".to_string(),
+        "right" => return "\x1b[C".to_string(),
+        "left" => return "\x1b[D".to_string(),
+        "home" => return "\x1b[H".to_string(),
+        "end" => return "\x1b[F".to_string(),
+        "pageup" => return "\x1b[5~".to_string(),
+        "pagedown" => return "\x1b[6~".to_string(),
+        "delete" => return "\x1b[3~".to_string(),
+        "insert" => return "\x1b[2~".to_string(),
+        "space" => return " ".to_string(),
+        _ => {}
     }
+
+    // Use key_char for actual typed character (handles shift for uppercase, etc.)
+    if let Some(key_char) = &event.keystroke.key_char {
+        if !key_char.is_empty() {
+            return key_char.clone();
+        }
+    }
+
+    // Fallback to key if it's a single character
+    if key.len() == 1 {
+        return key.clone();
+    }
+
+    String::new()
 }
