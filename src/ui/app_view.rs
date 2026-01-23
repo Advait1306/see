@@ -350,6 +350,19 @@ impl AppView {
         }
     }
 
+    pub fn send_to_terminal(&self, input: &str, cx: &mut Context<Self>) {
+        if let Some(workspace_id) = self.active_workspace_id(cx) {
+            if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
+                pane_group.read(cx).active_pane.as_ref().map(|pane| {
+                    pane.read(cx).active_terminal().map(|terminal_view| {
+                        terminal_view.read(cx).write(input);
+                    });
+                });
+                cx.notify();
+            }
+        }
+    }
+
     pub fn next_terminal(&mut self, cx: &mut Context<Self>) {
         if let Some(workspace_id) = self.active_workspace_id(cx) {
             if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {

@@ -457,6 +457,10 @@ impl TerminalView {
             last_size: Arc::new(parking_lot::Mutex::new(None)),
         }
     }
+
+    pub fn write(&self, input: &str) {
+        self.terminal.lock().write(input.as_bytes());
+    }
 }
 
 impl Render for TerminalView {

@@ -83,6 +83,18 @@ fn main() {
         let keystroke_subscription = cx.intercept_keystrokes(move |event, window, cx| {
             let key = &event.keystroke;
 
+            // Handle tab key - GPUI uses it for focus navigation, but we want it to go to terminal
+            if key.key == "tab" && !key.modifiers.platform {
+                cx.stop_propagation();
+                if let Some(app_view) = app_view_for_interceptor.borrow().as_ref() {
+                    app_view.update(cx, |app, cx| {
+                        let input = if key.modifiers.shift { "\x1b[Z" } else { "\t" };
+                        app.send_to_terminal(input, cx);
+                    });
+                }
+                return;
+            }
+
             // Debug: log keystrokes with platform modifier
             if key.modifiers.platform {
                 log::info!(
