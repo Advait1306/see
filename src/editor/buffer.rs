@@ -184,4 +184,15 @@ impl Buffer {
             len
         }
     }
+
+    /// Get a slice of text between two character offsets
+    pub fn slice(&self, start: usize, end: usize) -> Option<String> {
+        let start = start.min(self.rope.len_chars());
+        let end = end.min(self.rope.len_chars());
+        if start <= end {
+            Some(self.rope.slice(start..end).to_string())
+        } else {
+            None
+        }
+    }
 }

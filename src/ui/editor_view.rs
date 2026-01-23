@@ -59,6 +59,65 @@ fn line_number_color() -> Hsla {
     .into()
 }
 
+fn selection_color() -> Hsla {
+    Hsla {
+        h: 0.62,
+        s: 0.60,
+        l: 0.55,
+        a: 0.35,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SelectionPhase {
+    None,
+    Selecting,
+    Ended,
+}
+
+/// Selection anchor and end points (line, col)
+#[derive(Clone, Copy, Debug)]
+struct Selection {
+    /// The anchor point (where selection started)
+    anchor_line: usize,
+    anchor_col: usize,
+    /// The end point (where selection currently ends)
+    end_line: usize,
+    end_col: usize,
+}
+
+impl Selection {
+    fn new(line: usize, col: usize) -> Self {
+        Self {
+            anchor_line: line,
+            anchor_col: col,
+            end_line: line,
+            end_col: col,
+        }
+    }
+
+    fn update(&mut self, line: usize, col: usize) {
+        self.end_line = line;
+        self.end_col = col;
+    }
+
+    /// Get normalized start and end (start <= end)
+    fn normalized(&self) -> ((usize, usize), (usize, usize)) {
+        let start = (self.anchor_line, self.anchor_col);
+        let end = (self.end_line, self.end_col);
+        if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        }
+    }
+
+    /// Check if selection is empty (anchor == end)
+    fn is_empty(&self) -> bool {
+        self.anchor_line == self.end_line && self.anchor_col == self.end_col
+    }
+}
+
 pub struct EditorView {
     buffer: Entity<Buffer>,
     file_path: PathBuf,
@@ -66,11 +125,14 @@ pub struct EditorView {
     cursor_col: usize,
     scroll_offset: usize,
     scroll_x: f32,
+    scroll_accumulator: f32, // For smooth partial scrolling
     focus_handle: FocusHandle,
     last_bounds: Option<Bounds<Pixels>>,
     last_line_number_width: f32,
     cursor_visible: bool,
     last_cursor_move: std::time::Instant,
+    selection: Option<Selection>,
+    selection_phase: SelectionPhase,
     _blink_task: Task<()>,
     _subscription: Subscription,
 }
@@ -119,11 +181,14 @@ impl EditorView {
             cursor_col: 0,
             scroll_offset: 0,
             scroll_x: 0.0,
+            scroll_accumulator: 0.0,
             focus_handle: cx.focus_handle(),
             last_bounds: None,
             last_line_number_width: 0.0,
             cursor_visible: true,
             last_cursor_move: std::time::Instant::now(),
+            selection: None,
+            selection_phase: SelectionPhase::None,
             _blink_task: blink_task,
             _subscription: subscription,
         }
@@ -165,6 +230,100 @@ impl EditorView {
         self.last_cursor_move = std::time::Instant::now();
     }
 
+    /// Convert pixel position to (line, col) in editor coordinates
+    fn pixel_to_line_col(
+        &self,
+        position: gpui::Point<Pixels>,
+        bounds: Bounds<Pixels>,
+        cx: &App,
+    ) -> (usize, usize) {
+        let line_number_width = self.last_line_number_width;
+
+        // Convert window position to element-local position
+        let local_x = f32::from(position.x) - f32::from(bounds.origin.x);
+        let local_y = f32::from(position.y) - f32::from(bounds.origin.y);
+
+        // Calculate clicked line (accounting for vertical scroll)
+        let click_y = local_y - PADDING;
+        let clicked_line = if click_y >= 0.0 {
+            self.scroll_offset + (click_y / CELL_HEIGHT) as usize
+        } else {
+            self.scroll_offset
+        };
+
+        // Calculate clicked column (accounting for horizontal scroll and gutter)
+        let text_area_x = PADDING + line_number_width;
+        let click_x = local_x - text_area_x + self.scroll_x;
+        let clicked_col = if click_x >= 0.0 {
+            (click_x / CELL_WIDTH).round() as usize
+        } else {
+            0
+        };
+
+        // Clamp to valid positions
+        let buffer = self.buffer.read(cx);
+        let line_count = buffer.line_count();
+        let line = if line_count > 0 {
+            clicked_line.min(line_count - 1)
+        } else {
+            0
+        };
+        let line_len = if line_count > 0 {
+            buffer.line_len(line)
+        } else {
+            0
+        };
+        let col = clicked_col.min(line_len);
+
+        (line, col)
+    }
+
+    /// Clear selection
+    fn clear_selection(&mut self) {
+        self.selection = None;
+        self.selection_phase = SelectionPhase::None;
+    }
+
+    /// Get selected text from buffer
+    #[allow(dead_code)]
+    fn selection_to_string(&self, cx: &App) -> Option<String> {
+        let selection = self.selection.as_ref()?;
+        if selection.is_empty() {
+            return None;
+        }
+
+        let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
+        let buffer = self.buffer.read(cx);
+
+        let start_offset = buffer.line_col_to_offset(start_line, start_col);
+        let end_offset = buffer.line_col_to_offset(end_line, end_col);
+
+        buffer.slice(start_offset, end_offset)
+    }
+
+    /// Delete selected text and return whether anything was deleted
+    fn delete_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        let selection = match self.selection.take() {
+            Some(s) if !s.is_empty() => s,
+            _ => return false,
+        };
+
+        let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
+        let start_offset = self.buffer.read(cx).line_col_to_offset(start_line, start_col);
+        let end_offset = self.buffer.read(cx).line_col_to_offset(end_line, end_col);
+
+        self.buffer.update(cx, |buf, cx| {
+            buf.delete(start_offset, end_offset, cx);
+        });
+
+        // Move cursor to start of selection
+        self.cursor_line = start_line;
+        self.cursor_col = start_col;
+        self.selection_phase = SelectionPhase::None;
+
+        true
+    }
+
     fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         // Reset cursor blink on any key press
         self.reset_cursor_blink();
@@ -180,9 +339,10 @@ impl EditorView {
             return;
         }
 
-        // Handle navigation keys
+        // Handle navigation keys (clear selection on navigation)
         match key.as_str() {
             "up" => {
+                self.clear_selection();
                 if self.cursor_line > 0 {
                     self.cursor_line -= 1;
                     self.ensure_cursor_valid(cx);
@@ -191,6 +351,7 @@ impl EditorView {
                 }
             }
             "down" => {
+                self.clear_selection();
                 let line_count = self.buffer.read(cx).line_count();
                 if self.cursor_line + 1 < line_count {
                     self.cursor_line += 1;
@@ -200,6 +361,19 @@ impl EditorView {
                 }
             }
             "left" => {
+                // If there's a selection, move cursor to start of selection
+                if let Some(selection) = self.selection.take() {
+                    if !selection.is_empty() {
+                        let ((start_line, start_col), _) = selection.normalized();
+                        self.cursor_line = start_line;
+                        self.cursor_col = start_col;
+                        self.selection_phase = SelectionPhase::None;
+                        self.ensure_cursor_visible(cx);
+                        cx.notify();
+                        return;
+                    }
+                }
+                self.selection_phase = SelectionPhase::None;
                 if self.cursor_col > 0 {
                     self.cursor_col -= 1;
                     self.ensure_cursor_visible(cx);
@@ -213,6 +387,19 @@ impl EditorView {
                 }
             }
             "right" => {
+                // If there's a selection, move cursor to end of selection
+                if let Some(selection) = self.selection.take() {
+                    if !selection.is_empty() {
+                        let (_, (end_line, end_col)) = selection.normalized();
+                        self.cursor_line = end_line;
+                        self.cursor_col = end_col;
+                        self.selection_phase = SelectionPhase::None;
+                        self.ensure_cursor_visible(cx);
+                        cx.notify();
+                        return;
+                    }
+                }
+                self.selection_phase = SelectionPhase::None;
                 let line_len = self.buffer.read(cx).line_len(self.cursor_line);
                 if self.cursor_col < line_len {
                     self.cursor_col += 1;
@@ -230,22 +417,26 @@ impl EditorView {
                 }
             }
             "home" => {
+                self.clear_selection();
                 self.cursor_col = 0;
                 self.ensure_cursor_visible(cx);
                 cx.notify();
             }
             "end" => {
+                self.clear_selection();
                 self.cursor_col = self.buffer.read(cx).line_len(self.cursor_line);
                 self.ensure_cursor_visible(cx);
                 cx.notify();
             }
             "pageup" => {
+                self.clear_selection();
                 self.cursor_line = self.cursor_line.saturating_sub(20);
                 self.ensure_cursor_valid(cx);
                 self.ensure_cursor_visible(cx);
                 cx.notify();
             }
             "pagedown" => {
+                self.clear_selection();
                 let line_count = self.buffer.read(cx).line_count();
                 self.cursor_line = (self.cursor_line + 20).min(line_count.saturating_sub(1));
                 self.ensure_cursor_valid(cx);
@@ -253,10 +444,16 @@ impl EditorView {
                 cx.notify();
             }
             "backspace" => {
-                self.delete_backward(cx);
+                // Delete selection if any, otherwise delete backward
+                if !self.delete_selection(cx) {
+                    self.delete_backward(cx);
+                }
             }
             "delete" => {
-                self.delete_forward(cx);
+                // Delete selection if any, otherwise delete forward
+                if !self.delete_selection(cx) {
+                    self.delete_forward(cx);
+                }
             }
             "enter" => {
                 self.insert_text("\n", cx);
@@ -276,6 +473,9 @@ impl EditorView {
     }
 
     fn insert_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        // Delete selection if any (this also positions cursor at selection start)
+        self.delete_selection(cx);
+
         let offset = self.buffer.read(cx).line_col_to_offset(self.cursor_line, self.cursor_col);
         self.buffer.update(cx, |buf, cx| {
             buf.insert(offset, text, cx);
@@ -382,30 +582,30 @@ impl Render for EditorView {
                 this.handle_key(event, cx);
             }))
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
-                // Handle both vertical and horizontal scrolling
-                let (delta_x, delta_y) = match event.delta {
+                // Handle both vertical and horizontal scrolling with smooth accumulation
+                let (h_pixel_delta, v_pixel_delta) = match event.delta {
                     ScrollDelta::Lines(lines) => (
                         f32::from(lines.x) * CELL_WIDTH * 3.0,
-                        f32::from(lines.y),
+                        f32::from(lines.y) * CELL_HEIGHT,
                     ),
                     ScrollDelta::Pixels(pixels) => (
                         f32::from(pixels.x),
-                        f32::from(pixels.y) / CELL_HEIGHT,
+                        f32::from(pixels.y),
                     ),
                 };
 
                 // Shift+scroll converts vertical to horizontal
                 let (h_delta, v_delta) = if event.modifiers.shift {
-                    (delta_y * CELL_WIDTH * 3.0, 0.0)
+                    (v_pixel_delta, 0.0)
                 } else {
-                    (delta_x, delta_y)
+                    (h_pixel_delta, v_pixel_delta)
                 };
 
                 // Get content bounds for clamping
-                let buffer = this.buffer.read(cx);
-                let line_count = buffer.line_count();
-                let max_line_len = buffer.max_line_len();
-                drop(buffer);
+                let (line_count, max_line_len) = {
+                    let buffer = this.buffer.read(cx);
+                    (buffer.line_count(), buffer.max_line_len())
+                };
 
                 // Calculate visible area from stored bounds
                 let (visible_lines, visible_width) = if let Some(bounds) = this.last_bounds {
@@ -417,7 +617,7 @@ impl Render for EditorView {
                     (30, 80.0 * CELL_WIDTH) // Fallback defaults
                 };
 
-                // Horizontal scrolling
+                // Horizontal scrolling (pixel-based, smooth)
                 if h_delta.abs() > 0.1 {
                     this.scroll_x -= h_delta;
                     if this.scroll_x < 0.0 {
@@ -431,9 +631,12 @@ impl Render for EditorView {
                     }
                 }
 
-                // Vertical scrolling
-                if v_delta.abs() > 0.1 {
-                    let lines = v_delta as i32;
+                // Vertical scrolling with accumulator (like terminal)
+                this.scroll_accumulator += v_delta;
+                let lines = (this.scroll_accumulator / CELL_HEIGHT) as i32;
+                if lines != 0 {
+                    this.scroll_accumulator -= lines as f32 * CELL_HEIGHT;
+
                     if lines < 0 {
                         this.scroll_offset = this.scroll_offset.saturating_add((-lines) as usize);
                     } else {
@@ -452,41 +655,60 @@ impl Render for EditorView {
                 cx.focus_self(window);
                 this.reset_cursor_blink();
 
-                // Use stored bounds to convert window coordinates to element-local coordinates
-                if let Some(bounds) = this.last_bounds {
-                    let line_number_width = this.last_line_number_width;
+                let Some(bounds) = this.last_bounds else { return };
+                let (line, col) = this.pixel_to_line_col(event.position, bounds, cx);
 
-                    // Convert window position to element-local position
-                    let local_x = f32::from(event.position.x) - f32::from(bounds.origin.x);
-                    let local_y = f32::from(event.position.y) - f32::from(bounds.origin.y);
-
-                    // Calculate clicked line (accounting for vertical scroll)
-                    let click_y = local_y - PADDING;
-                    let clicked_line = if click_y >= 0.0 {
-                        this.scroll_offset + (click_y / CELL_HEIGHT) as usize
-                    } else {
-                        this.scroll_offset
-                    };
-
-                    // Calculate clicked column (accounting for horizontal scroll and gutter)
-                    let text_area_x = PADDING + line_number_width;
-                    let click_x = local_x - text_area_x + this.scroll_x;
-                    let clicked_col = if click_x >= 0.0 {
-                        (click_x / CELL_WIDTH).round() as usize
-                    } else {
-                        0
-                    };
-
-                    // Clamp to valid positions
-                    let line_count = this.buffer.read(cx).line_count();
-                    if line_count > 0 {
-                        this.cursor_line = clicked_line.min(line_count - 1);
-                        let line_len = this.buffer.read(cx).line_len(this.cursor_line);
-                        this.cursor_col = clicked_col.min(line_len);
+                // Shift+click extends selection
+                if event.modifiers.shift {
+                    if let Some(ref mut selection) = this.selection {
+                        selection.update(line, col);
+                        this.selection_phase = SelectionPhase::Selecting;
+                        this.cursor_line = line;
+                        this.cursor_col = col;
+                        cx.notify();
+                        return;
                     }
                 }
 
+                // Start new selection
+                this.selection = Some(Selection::new(line, col));
+                this.selection_phase = SelectionPhase::Selecting;
+                this.cursor_line = line;
+                this.cursor_col = col;
+
                 cx.notify();
+            }))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                // Only update selection while dragging with left mouse button
+                if this.selection_phase != SelectionPhase::Selecting {
+                    return;
+                }
+                if event.pressed_button != Some(MouseButton::Left) {
+                    return;
+                }
+
+                let Some(bounds) = this.last_bounds else { return };
+                let (line, col) = this.pixel_to_line_col(event.position, bounds, cx);
+
+                if let Some(ref mut selection) = this.selection {
+                    selection.update(line, col);
+                }
+                this.cursor_line = line;
+                this.cursor_col = col;
+
+                cx.notify();
+            }))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _event: &MouseUpEvent, _, cx| {
+                if this.selection_phase == SelectionPhase::Selecting {
+                    // If selection is empty, clear it
+                    if let Some(ref selection) = this.selection {
+                        if selection.is_empty() {
+                            this.selection = None;
+                        }
+                    }
+                    this.selection_phase = SelectionPhase::Ended;
+                    cx.notify();
+                }
             }))
             .size_full()
             .child(EditorElement {
@@ -498,6 +720,7 @@ impl Render for EditorView {
                 scroll_x: self.scroll_x,
                 is_focused,
                 cursor_visible: self.cursor_visible,
+                selection: self.selection,
             })
     }
 }
@@ -518,6 +741,14 @@ struct EditorElement {
     scroll_x: f32,
     is_focused: bool,
     cursor_visible: bool,
+    selection: Option<Selection>,
+}
+
+/// Represents a selection range on a single visible line
+struct SelectionLineRange {
+    line_idx: usize, // Index in visible lines (0-based screen position)
+    start_col: usize,
+    end_col: usize,
 }
 
 struct EditorLayoutState {
@@ -525,6 +756,7 @@ struct EditorLayoutState {
     cursor_position: Option<gpui::Point<Pixels>>,
     line_number_width: f32,
     scroll_x: f32,
+    selection_ranges: Vec<SelectionLineRange>,
 }
 
 impl IntoElement for EditorElement {
@@ -622,11 +854,53 @@ impl Element for EditorElement {
             None
         };
 
+        // Calculate selection ranges for visible lines
+        let mut selection_ranges = Vec::new();
+        if let Some(ref selection) = self.selection {
+            if !selection.is_empty() {
+                let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
+
+                // Iterate through visible lines
+                for (idx, (line_num, content)) in visible_lines.iter().enumerate() {
+                    let line = line_num - 1; // Convert back to 0-indexed
+
+                    // Check if this line is within the selection
+                    if line < start_line || line > end_line {
+                        continue;
+                    }
+
+                    let line_len = content.len();
+
+                    let sel_start_col = if line == start_line {
+                        start_col
+                    } else {
+                        0
+                    };
+
+                    let sel_end_col = if line == end_line {
+                        end_col
+                    } else {
+                        line_len
+                    };
+
+                    // Only add if there's something to select on this line
+                    if sel_start_col < sel_end_col || (line != end_line && sel_start_col <= line_len) {
+                        selection_ranges.push(SelectionLineRange {
+                            line_idx: idx,
+                            start_col: sel_start_col,
+                            end_col: if line == end_line { sel_end_col } else { line_len.max(sel_start_col) },
+                        });
+                    }
+                }
+            }
+        }
+
         EditorLayoutState {
             visible_lines,
             cursor_position,
             line_number_width,
             scroll_x: self.scroll_x,
+            selection_ranges,
         }
     }
 
@@ -709,11 +983,34 @@ impl Element for EditorElement {
             },
         };
 
-        // Paint line content and cursor with clipping
+        // Paint line content, selection, and cursor with clipping
         let cursor_pos = layout.cursor_position;
         let is_focused = self.is_focused;
         let cursor_visible = self.cursor_visible;
+        let text_x_base = PADDING + layout.line_number_width - layout.scroll_x;
+
         window.with_content_mask(Some(ContentMask { bounds: text_area_bounds }), |window| {
+            // Paint selection highlights first (behind text)
+            let selection_bg = selection_color();
+            for range in &layout.selection_ranges {
+                let y = origin.y + px(PADDING + (range.line_idx as f32 * CELL_HEIGHT));
+                let x = origin.x + px(text_x_base + (range.start_col as f32 * CELL_WIDTH));
+                let width = ((range.end_col - range.start_col) as f32) * CELL_WIDTH;
+
+                // Minimum width of one cell for empty line selections
+                let width = if width < CELL_WIDTH { CELL_WIDTH } else { width };
+
+                let selection_bounds = Bounds::new(
+                    gpui::point(x, y),
+                    Size {
+                        width: px(width),
+                        height: px(CELL_HEIGHT),
+                    },
+                );
+                window.paint_quad(fill(selection_bounds, selection_bg));
+            }
+
+            // Paint text
             for (idx, (_line_num, content)) in layout.visible_lines.iter().enumerate() {
                 let y = origin.y + px(PADDING + (idx as f32 * CELL_HEIGHT));
 
@@ -732,9 +1029,8 @@ impl Element for EditorElement {
                         &[text_run],
                         None,
                     );
-                    let text_x = PADDING + layout.line_number_width - layout.scroll_x;
                     let _ = shaped.paint(
-                        gpui::point(origin.x + px(text_x), y),
+                        gpui::point(origin.x + px(text_x_base), y),
                         px(CELL_HEIGHT),
                         window,
                         cx,
