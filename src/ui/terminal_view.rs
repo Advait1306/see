@@ -960,12 +960,20 @@ fn key_to_input(event: &KeyDownEvent, mode: &TermMode) -> String {
             return "\x1b[B".to_string();
         }
         "right" => {
+            // Option+Right: forward word (ESC + f)
+            if modifiers.modifiers.alt {
+                return "\x1bf".to_string();
+            }
             if app_cursor {
                 return "\x1bOC".to_string();
             }
             return "\x1b[C".to_string();
         }
         "left" => {
+            // Option+Left: backward word (ESC + b)
+            if modifiers.modifiers.alt {
+                return "\x1bb".to_string();
+            }
             if app_cursor {
                 return "\x1bOD".to_string();
             }

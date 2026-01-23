@@ -342,4 +342,18 @@ impl Buffer {
             None
         }
     }
+
+    /// Get the character at a given offset
+    pub fn char_at(&self, offset: usize) -> Option<char> {
+        if offset < self.rope.len_chars() {
+            Some(self.rope.char(offset))
+        } else {
+            None
+        }
+    }
+
+    /// Get the total number of characters in the buffer
+    pub fn total_chars(&self) -> usize {
+        self.rope.len_chars()
+    }
 }

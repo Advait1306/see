@@ -383,6 +383,20 @@ impl EditorView {
             return;
         }
 
+        // Handle Option+Arrow for word navigation
+        if modifiers.alt && key == "left" {
+            self.clear_selection();
+            self.move_word_left(cx);
+            cx.notify();
+            return;
+        }
+        if modifiers.alt && key == "right" {
+            self.clear_selection();
+            self.move_word_right(cx);
+            cx.notify();
+            return;
+        }
+
         // Handle navigation keys (clear selection on navigation)
         match key.as_str() {
             "up" => {
@@ -613,6 +627,147 @@ impl EditorView {
             self.scroll_x = 0.0;
         }
     }
+
+    fn move_word_left(&mut self, cx: &mut Context<Self>) {
+        let buffer = self.buffer.read(cx);
+        let mut offset = buffer.line_col_to_offset(self.cursor_line, self.cursor_col);
+
+        if offset == 0 {
+            return;
+        }
+
+        // Check if we're at start of line
+        if self.cursor_col == 0 {
+            // Move to end of previous line
+            offset -= 1; // This moves past the newline to end of previous line
+            let (line, col) = buffer.offset_to_line_col(offset);
+            self.cursor_line = line;
+            self.cursor_col = buffer.line_len(line); // Position at end of line
+            self.ensure_cursor_visible(cx);
+            return;
+        }
+
+        // Move back one character first
+        offset -= 1;
+
+        // Skip whitespace/non-word characters going backwards, but stop at newline
+        while offset > 0 {
+            if let Some(ch) = buffer.char_at(offset) {
+                if ch == '\n' {
+                    // Stop after the newline (at start of current line)
+                    offset += 1;
+                    break;
+                }
+                if is_word_char(ch) {
+                    break;
+                }
+                offset -= 1;
+            } else {
+                break;
+            }
+        }
+
+        // Check if we landed on a newline (means we're at start of line)
+        if let Some(ch) = buffer.char_at(offset) {
+            if ch == '\n' {
+                offset += 1; // Move to start of line
+            }
+        }
+
+        // Now move to the start of the word (if we're in a word)
+        if offset > 0 {
+            if let Some(ch) = buffer.char_at(offset) {
+                if is_word_char(ch) {
+                    while offset > 0 {
+                        if let Some(prev_ch) = buffer.char_at(offset - 1) {
+                            if !is_word_char(prev_ch) {
+                                break;
+                            }
+                            offset -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let (line, col) = buffer.offset_to_line_col(offset);
+        self.cursor_line = line;
+        self.cursor_col = col;
+        self.ensure_cursor_visible(cx);
+    }
+
+    fn move_word_right(&mut self, cx: &mut Context<Self>) {
+        let buffer = self.buffer.read(cx);
+        let total_chars = buffer.total_chars();
+        let mut offset = buffer.line_col_to_offset(self.cursor_line, self.cursor_col);
+
+        if offset >= total_chars {
+            return;
+        }
+
+        // Check if we're at end of line (cursor at newline position)
+        if let Some(ch) = buffer.char_at(offset) {
+            if ch == '\n' {
+                // Move past the newline to next line
+                offset += 1;
+                // Skip any whitespace at start of next line to find next word
+                while offset < total_chars {
+                    if let Some(ch) = buffer.char_at(offset) {
+                        if ch == '\n' || is_word_char(ch) {
+                            break;
+                        }
+                        offset += 1;
+                    } else {
+                        break;
+                    }
+                }
+                let (line, col) = buffer.offset_to_line_col(offset);
+                self.cursor_line = line;
+                self.cursor_col = col;
+                self.ensure_cursor_visible(cx);
+                return;
+            }
+        }
+
+        // Skip current word characters
+        while offset < total_chars {
+            if let Some(ch) = buffer.char_at(offset) {
+                if ch == '\n' || !is_word_char(ch) {
+                    break;
+                }
+                offset += 1;
+            } else {
+                break;
+            }
+        }
+
+        // Skip whitespace/non-word characters, but stop at newline
+        while offset < total_chars {
+            if let Some(ch) = buffer.char_at(offset) {
+                // Stop at newline - cursor stays at end of current line
+                if ch == '\n' {
+                    break;
+                }
+                if is_word_char(ch) {
+                    break;
+                }
+                offset += 1;
+            } else {
+                break;
+            }
+        }
+
+        let (line, col) = buffer.offset_to_line_col(offset);
+        self.cursor_line = line;
+        self.cursor_col = col;
+        self.ensure_cursor_visible(cx);
+    }
+}
+
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
 }
 
 impl Render for EditorView {
