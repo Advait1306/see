@@ -821,7 +821,13 @@ impl Element for TerminalElement {
                         }
 
                         let fg = ansi_to_hsla(fg).unwrap_or_else(default_fg);
-                        let bg = ansi_to_hsla(bg);
+                        // Only set background if it's not the default background
+                        // (so selection highlights can show through)
+                        let bg = if matches!(bg, AnsiColor::Named(NamedColor::Background)) {
+                            None
+                        } else {
+                            ansi_to_hsla(bg)
+                        };
                         (fg, bg)
                     };
 
