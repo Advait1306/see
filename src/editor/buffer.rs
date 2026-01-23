@@ -13,11 +13,48 @@ pub enum BufferEvent {
     ExternalChange,
 }
 
+/// Editor state to restore on undo (cursor position and optional selection)
+#[derive(Debug, Clone, Default)]
+pub struct EditorState {
+    pub cursor: (usize, usize), // (line, col)
+    /// Selection as (anchor_line, anchor_col, end_line, end_col), None if no selection
+    pub selection: Option<(usize, usize, usize, usize)>,
+}
+
+impl EditorState {
+    pub fn new(cursor: (usize, usize)) -> Self {
+        Self { cursor, selection: None }
+    }
+
+    pub fn with_selection(cursor: (usize, usize), selection: (usize, usize, usize, usize)) -> Self {
+        Self { cursor, selection: Some(selection) }
+    }
+}
+
+/// Represents a single undoable operation
+#[derive(Debug, Clone)]
+enum UndoOperation {
+    /// Text was inserted at offset
+    Insert {
+        offset: usize,
+        text: String,
+        state_before: EditorState,
+    },
+    /// Text was deleted from start..end
+    Delete {
+        offset: usize,
+        text: String, // The deleted text (for restoring)
+        state_before: EditorState,
+    },
+}
+
 pub struct Buffer {
     rope: Rope,
     file_path: PathBuf,
     saved_mtime: Option<SystemTime>,
     is_dirty: bool,
+    undo_stack: Vec<UndoOperation>,
+    redo_stack: Vec<UndoOperation>,
 }
 
 impl EventEmitter<BufferEvent> for Buffer {}
@@ -34,6 +71,8 @@ impl Buffer {
             file_path: path,
             saved_mtime: mtime,
             is_dirty: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         })
     }
 
@@ -53,23 +92,128 @@ impl Buffer {
         Ok(())
     }
 
+    /// Insert text at offset, recording for undo
     pub fn insert(&mut self, offset: usize, text: &str, cx: &mut Context<Self>) {
+        self.insert_with_state(offset, text, EditorState::default(), cx);
+    }
+
+    /// Insert text at offset with editor state for undo
+    pub fn insert_with_state(
+        &mut self,
+        offset: usize,
+        text: &str,
+        state_before: EditorState,
+        cx: &mut Context<Self>,
+    ) {
         let offset = offset.min(self.rope.len_chars());
+
+        // Record for undo
+        self.undo_stack.push(UndoOperation::Insert {
+            offset,
+            text: text.to_string(),
+            state_before,
+        });
+        // Clear redo stack on new operation
+        self.redo_stack.clear();
+
         self.rope.insert(offset, text);
         self.is_dirty = true;
         cx.emit(BufferEvent::Changed);
         cx.notify();
     }
 
+    /// Delete text from start..end, recording for undo
     pub fn delete(&mut self, start: usize, end: usize, cx: &mut Context<Self>) {
+        self.delete_with_state(start, end, EditorState::default(), cx);
+    }
+
+    /// Delete text from start..end with editor state for undo
+    pub fn delete_with_state(
+        &mut self,
+        start: usize,
+        end: usize,
+        state_before: EditorState,
+        cx: &mut Context<Self>,
+    ) {
         let start = start.min(self.rope.len_chars());
         let end = end.min(self.rope.len_chars());
         if start < end {
+            // Save the text being deleted for undo
+            let deleted_text = self.rope.slice(start..end).to_string();
+
+            // Record for undo
+            self.undo_stack.push(UndoOperation::Delete {
+                offset: start,
+                text: deleted_text,
+                state_before,
+            });
+            // Clear redo stack on new operation
+            self.redo_stack.clear();
+
             self.rope.remove(start..end);
             self.is_dirty = true;
             cx.emit(BufferEvent::Changed);
             cx.notify();
         }
+    }
+
+    /// Undo the last operation, returns editor state to restore if successful
+    pub fn undo(&mut self, cx: &mut Context<Self>) -> Option<EditorState> {
+        let op = self.undo_stack.pop()?;
+
+        let state = match &op {
+            UndoOperation::Insert { offset, text, state_before } => {
+                // Undo insert = delete the inserted text
+                let end = offset + text.chars().count();
+                self.rope.remove(*offset..end);
+                state_before.clone()
+            }
+            UndoOperation::Delete { offset, text, state_before } => {
+                // Undo delete = re-insert the deleted text
+                self.rope.insert(*offset, text);
+                state_before.clone()
+            }
+        };
+
+        // Push to redo stack (inverted operation)
+        self.redo_stack.push(op);
+
+        self.is_dirty = true;
+        cx.emit(BufferEvent::Changed);
+        cx.notify();
+
+        Some(state)
+    }
+
+    /// Redo the last undone operation, returns editor state if successful
+    pub fn redo(&mut self, cx: &mut Context<Self>) -> Option<EditorState> {
+        let op = self.redo_stack.pop()?;
+
+        let state = match &op {
+            UndoOperation::Insert { offset, text, .. } => {
+                // Redo insert = insert the text again
+                self.rope.insert(*offset, text);
+                // Position cursor at end of inserted text
+                let end_offset = offset + text.chars().count();
+                EditorState::new(self.offset_to_line_col(end_offset))
+            }
+            UndoOperation::Delete { offset, text, .. } => {
+                // Redo delete = delete the text again
+                let end = offset + text.chars().count();
+                self.rope.remove(*offset..end);
+                // Position cursor at deletion point
+                EditorState::new(self.offset_to_line_col(*offset))
+            }
+        };
+
+        // Push back to undo stack
+        self.undo_stack.push(op);
+
+        self.is_dirty = true;
+        cx.emit(BufferEvent::Changed);
+        cx.notify();
+
+        Some(state)
     }
 
     pub fn check_external_changes(&self) -> bool {
@@ -90,6 +234,9 @@ impl Buffer {
         self.rope = rope;
         self.saved_mtime = mtime;
         self.is_dirty = false;
+        // Clear undo/redo history on reload
+        self.undo_stack.clear();
+        self.redo_stack.clear();
         cx.emit(BufferEvent::Changed);
         cx.notify();
         Ok(())

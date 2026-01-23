@@ -1,4 +1,4 @@
-use crate::editor::{Buffer, BufferEvent};
+use crate::editor::{Buffer, BufferEvent, EditorState};
 use gpui::prelude::*;
 use gpui::*;
 use std::path::PathBuf;
@@ -308,12 +308,18 @@ impl EditorView {
             _ => return false,
         };
 
+        // Store editor state before deletion for undo (including selection)
+        let state_before = EditorState::with_selection(
+            (self.cursor_line, self.cursor_col),
+            (selection.anchor_line, selection.anchor_col, selection.end_line, selection.end_col),
+        );
+
         let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
         let start_offset = self.buffer.read(cx).line_col_to_offset(start_line, start_col);
         let end_offset = self.buffer.read(cx).line_col_to_offset(end_line, end_col);
 
         self.buffer.update(cx, |buf, cx| {
-            buf.delete(start_offset, end_offset, cx);
+            buf.delete_with_state(start_offset, end_offset, state_before, cx);
         });
 
         // Move cursor to start of selection
@@ -336,6 +342,44 @@ impl EditorView {
             self.buffer.update(cx, |buf, cx| {
                 let _ = buf.save(cx);
             });
+            return;
+        }
+
+        // Handle Cmd+Z for undo
+        if modifiers.platform && !modifiers.shift && key == "z" {
+            if let Some(state) = self.buffer.update(cx, |buf, cx| buf.undo(cx)) {
+                self.cursor_line = state.cursor.0;
+                self.cursor_col = state.cursor.1;
+                // Restore selection if there was one
+                if let Some((anchor_line, anchor_col, end_line, end_col)) = state.selection {
+                    self.selection = Some(Selection {
+                        anchor_line,
+                        anchor_col,
+                        end_line,
+                        end_col,
+                    });
+                    self.selection_phase = SelectionPhase::Ended;
+                } else {
+                    self.clear_selection();
+                }
+                self.ensure_cursor_valid(cx);
+                self.ensure_cursor_visible(cx);
+            }
+            cx.notify();
+            return;
+        }
+
+        // Handle Cmd+Shift+Z for redo
+        if modifiers.platform && modifiers.shift && key == "z" {
+            if let Some(state) = self.buffer.update(cx, |buf, cx| buf.redo(cx)) {
+                self.cursor_line = state.cursor.0;
+                self.cursor_col = state.cursor.1;
+                // Redo doesn't restore selection (it was deleted)
+                self.clear_selection();
+                self.ensure_cursor_valid(cx);
+                self.ensure_cursor_visible(cx);
+            }
+            cx.notify();
             return;
         }
 
@@ -476,9 +520,10 @@ impl EditorView {
         // Delete selection if any (this also positions cursor at selection start)
         self.delete_selection(cx);
 
+        let state_before = EditorState::new((self.cursor_line, self.cursor_col));
         let offset = self.buffer.read(cx).line_col_to_offset(self.cursor_line, self.cursor_col);
         self.buffer.update(cx, |buf, cx| {
-            buf.insert(offset, text, cx);
+            buf.insert_with_state(offset, text, state_before, cx);
         });
 
         // Move cursor forward
@@ -495,10 +540,11 @@ impl EditorView {
     }
 
     fn delete_backward(&mut self, cx: &mut Context<Self>) {
+        let state_before = EditorState::new((self.cursor_line, self.cursor_col));
         if self.cursor_col > 0 {
             let offset = self.buffer.read(cx).line_col_to_offset(self.cursor_line, self.cursor_col);
             self.buffer.update(cx, |buf, cx| {
-                buf.delete(offset - 1, offset, cx);
+                buf.delete_with_state(offset - 1, offset, state_before, cx);
             });
             self.cursor_col -= 1;
             cx.notify();
@@ -507,7 +553,7 @@ impl EditorView {
             let prev_line_len = self.buffer.read(cx).line_len(self.cursor_line - 1);
             let offset = self.buffer.read(cx).line_col_to_offset(self.cursor_line, 0);
             self.buffer.update(cx, |buf, cx| {
-                buf.delete(offset - 1, offset, cx);
+                buf.delete_with_state(offset - 1, offset, state_before, cx);
             });
             self.cursor_line -= 1;
             self.cursor_col = prev_line_len;
@@ -517,20 +563,21 @@ impl EditorView {
     }
 
     fn delete_forward(&mut self, cx: &mut Context<Self>) {
+        let state_before = EditorState::new((self.cursor_line, self.cursor_col));
         let line_len = self.buffer.read(cx).line_len(self.cursor_line);
         let line_count = self.buffer.read(cx).line_count();
 
         if self.cursor_col < line_len {
             let offset = self.buffer.read(cx).line_col_to_offset(self.cursor_line, self.cursor_col);
             self.buffer.update(cx, |buf, cx| {
-                buf.delete(offset, offset + 1, cx);
+                buf.delete_with_state(offset, offset + 1, state_before, cx);
             });
             cx.notify();
         } else if self.cursor_line + 1 < line_count {
             // Delete newline - join with next line
             let offset = self.buffer.read(cx).line_col_to_offset(self.cursor_line, self.cursor_col);
             self.buffer.update(cx, |buf, cx| {
-                buf.delete(offset, offset + 1, cx);
+                buf.delete_with_state(offset, offset + 1, state_before, cx);
             });
             cx.notify();
         }
