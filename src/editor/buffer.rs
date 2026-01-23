@@ -111,6 +111,21 @@ impl Buffer {
         self.rope.len_lines()
     }
 
+    /// Returns the length of the longest line in the buffer (excluding newline)
+    pub fn max_line_len(&self) -> usize {
+        let mut max_len = 0;
+        for i in 0..self.rope.len_lines() {
+            let line = self.rope.line(i);
+            let len = line.len_chars().saturating_sub(
+                if line.to_string().ends_with('\n') { 1 } else { 0 }
+            );
+            if len > max_len {
+                max_len = len;
+            }
+        }
+        max_len
+    }
+
     pub fn len_chars(&self) -> usize {
         self.rope.len_chars()
     }

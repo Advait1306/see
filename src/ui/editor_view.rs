@@ -70,6 +70,7 @@ pub struct EditorView {
     last_bounds: Option<Bounds<Pixels>>,
     last_line_number_width: f32,
     cursor_visible: bool,
+    last_cursor_move: std::time::Instant,
     _blink_task: Task<()>,
     _subscription: Subscription,
 }
@@ -96,8 +97,12 @@ impl EditorView {
 
                 let result = cx.update(|cx| {
                     this.update(cx, |this, cx| {
-                        this.cursor_visible = !this.cursor_visible;
-                        cx.notify();
+                        // Only blink if 0.5 seconds has passed since last cursor movement
+                        let elapsed = this.last_cursor_move.elapsed();
+                        if elapsed >= std::time::Duration::from_millis(500) {
+                            this.cursor_visible = !this.cursor_visible;
+                            cx.notify();
+                        }
                     })
                 });
 
@@ -118,6 +123,7 @@ impl EditorView {
             last_bounds: None,
             last_line_number_width: 0.0,
             cursor_visible: true,
+            last_cursor_move: std::time::Instant::now(),
             _blink_task: blink_task,
             _subscription: subscription,
         }
@@ -153,9 +159,10 @@ impl EditorView {
         }
     }
 
-    /// Reset cursor to visible (called on user interaction)
+    /// Reset cursor to visible and restart blink delay (called on user interaction)
     fn reset_cursor_blink(&mut self) {
         self.cursor_visible = true;
+        self.last_cursor_move = std::time::Instant::now();
     }
 
     fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
@@ -394,11 +401,33 @@ impl Render for EditorView {
                     (delta_x, delta_y)
                 };
 
+                // Get content bounds for clamping
+                let buffer = this.buffer.read(cx);
+                let line_count = buffer.line_count();
+                let max_line_len = buffer.max_line_len();
+                drop(buffer);
+
+                // Calculate visible area from stored bounds
+                let (visible_lines, visible_width) = if let Some(bounds) = this.last_bounds {
+                    let available_height = f32::from(bounds.size.height) - (PADDING * 2.0);
+                    let visible_lines = (available_height / CELL_HEIGHT).floor() as usize;
+                    let visible_width = f32::from(bounds.size.width) - PADDING - this.last_line_number_width;
+                    (visible_lines, visible_width)
+                } else {
+                    (30, 80.0 * CELL_WIDTH) // Fallback defaults
+                };
+
                 // Horizontal scrolling
                 if h_delta.abs() > 0.1 {
                     this.scroll_x -= h_delta;
                     if this.scroll_x < 0.0 {
                         this.scroll_x = 0.0;
+                    }
+                    // Limit so last char reaches right edge (not left edge)
+                    let content_width = max_line_len as f32 * CELL_WIDTH;
+                    let max_scroll_x = (content_width - visible_width).max(0.0);
+                    if this.scroll_x > max_scroll_x {
+                        this.scroll_x = max_scroll_x;
                     }
                 }
 
@@ -409,6 +438,11 @@ impl Render for EditorView {
                         this.scroll_offset = this.scroll_offset.saturating_add((-lines) as usize);
                     } else {
                         this.scroll_offset = this.scroll_offset.saturating_sub(lines as usize);
+                    }
+                    // Limit so last line reaches bottom (not top)
+                    let max_scroll_offset = line_count.saturating_sub(visible_lines);
+                    if this.scroll_offset > max_scroll_offset {
+                        this.scroll_offset = max_scroll_offset;
                     }
                 }
 
