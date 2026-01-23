@@ -1,4 +1,5 @@
 mod config;
+mod editor;
 mod file_watcher;
 mod terminal;
 mod ui;

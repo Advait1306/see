@@ -147,9 +147,10 @@ impl ListDelegate for FileTreeDelegate {
     }
 }
 
-// Event emitted when a directory should be toggled
+// Events emitted by the file tree
 pub enum FileTreeEvent {
     ToggleDirectory(PathBuf),
+    OpenFile(PathBuf),
 }
 
 pub struct FileTree {
@@ -236,13 +237,15 @@ impl FileTree {
             };
             let list_state = cx.new(|cx| ListState::new(delegate, window, cx));
 
-            // Subscribe to click events (Confirm) to handle directory toggling
+            // Subscribe to click events (Confirm) to handle directory toggling and file opening
             cx.subscribe(&list_state, |this, list_entity, event: &ListEvent, cx| {
                 if let ListEvent::Confirm(ix) = event {
                     let entry = list_entity.read(cx).delegate().entries.get(ix.row).cloned();
                     if let Some(entry) = entry {
                         if entry.is_dir {
                             cx.emit(FileTreeEvent::ToggleDirectory(entry.path));
+                        } else {
+                            cx.emit(FileTreeEvent::OpenFile(entry.path));
                         }
                     }
                 }

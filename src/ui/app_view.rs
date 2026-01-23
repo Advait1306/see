@@ -1,7 +1,9 @@
 use crate::config::{self, AppState, WorkspaceConfig, MemberConfig};
+use crate::editor::BufferStore;
 use crate::terminal::Terminal;
+use crate::ui::editor_view::EditorView;
 use crate::ui::file_tree::{FileTree, FileTreeEvent};
-use crate::ui::pane::{Pane, Axis};
+use crate::ui::pane::{Pane, Axis, TabItem};
 use crate::ui::pane_group::{Member, PaneAxis, PaneGroup, PaneGroupEvent};
 use crate::ui::TerminalView;
 use crate::workspace::{WorkspaceManager, WorkspaceEvent};
@@ -25,6 +27,7 @@ pub struct AppView {
     sidebar_collapsed: bool,
     file_tree: Option<Entity<FileTree>>,
     file_tree_visible: bool,
+    buffer_store: Entity<BufferStore>,
 }
 
 impl AppView {
@@ -39,6 +42,8 @@ impl AppView {
         })
         .detach();
 
+        let buffer_store = cx.new(|cx| BufferStore::new(cx));
+
         Self {
             workspace_manager,
             workspace_panes: HashMap::new(),
@@ -48,6 +53,7 @@ impl AppView {
             sidebar_collapsed: false,
             file_tree: None,
             file_tree_visible: false,
+            buffer_store,
         }
     }
 
@@ -74,6 +80,7 @@ impl AppView {
                     .unwrap_or(MemberConfig::Pane {
                         terminal_count: 1,
                         active_index: 0,
+                        open_files: Vec::new(),
                     });
 
                 let expanded_paths = self
@@ -103,8 +110,9 @@ impl AppView {
             Member::Pane(pane) => {
                 let pane = pane.read(cx);
                 MemberConfig::Pane {
-                    terminal_count: pane.terminals.len(),
+                    terminal_count: pane.terminal_count(),
                     active_index: pane.active_index,
+                    open_files: pane.open_file_paths(cx),
                 }
             }
             Member::Axis(axis) => {
@@ -151,8 +159,10 @@ impl AppView {
 
             // Create pane group from layout
             let path = workspace_config.path.clone();
+            let buffer_store = self.buffer_store.clone();
+            let layout = workspace_config.layout.clone();
             let pane_group = cx.new(|cx| {
-                let member = Self::create_member_from_config(&workspace_config.layout, &path, cx);
+                let member = Self::create_member_from_config(&layout, &path, &buffer_store, cx);
                 let active_pane = member.first_pane();
                 let mut group = PaneGroup::with_root(path.clone(), member, cx);
                 group.active_pane = active_pane;
@@ -208,12 +218,42 @@ impl AppView {
                     FileTreeEvent::ToggleDirectory(path) => {
                         this.handle_toggle_directory(path.clone(), &file_tree, cx);
                     }
+                    FileTreeEvent::OpenFile(path) => {
+                        this.open_file_in_active_pane(path.clone(), cx);
+                    }
                 }
             })
             .detach();
 
             self.file_tree = Some(file_tree);
         }
+    }
+
+    fn open_file_in_active_pane(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        // Get or create buffer from central store
+        let buffer = self.buffer_store.update(cx, |store, cx| {
+            store.open_buffer(path.clone(), cx)
+        });
+
+        let Some(buffer) = buffer else {
+            log::error!("Failed to open buffer for {:?}", path);
+            return;
+        };
+
+        if let Some(workspace_id) = self.active_workspace_id(cx) {
+            if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
+                pane_group.update(cx, |pg, cx| {
+                    if let Some(pane) = pg.active_pane.clone() {
+                        pane.update(cx, |p, cx| {
+                            p.add_editor(buffer, path, cx);
+                        });
+                    }
+                });
+            }
+        }
+
+        // Save state when a file is opened
+        self.save_state(cx);
     }
 
     fn handle_toggle_directory(
@@ -249,24 +289,43 @@ impl AppView {
     fn create_member_from_config(
         config: &MemberConfig,
         path: &PathBuf,
+        buffer_store: &Entity<BufferStore>,
         cx: &mut Context<PaneGroup>,
     ) -> Member {
         match config {
             MemberConfig::Pane {
                 terminal_count,
                 active_index,
+                open_files,
             } => {
+                let buffer_store = buffer_store.clone();
                 let pane = cx.new(|cx| {
                     let mut pane = Pane::new(path.clone(), cx);
-                    let count = (*terminal_count).max(1);
+
+                    // Add terminals first
+                    let count = if open_files.is_empty() { (*terminal_count).max(1) } else { *terminal_count };
                     for _ in 0..count {
-                        if let Ok(terminal) = Terminal::new(path.clone()) {
-                            let terminal = Arc::new(parking_lot::Mutex::new(terminal));
-                            let terminal_view = cx.new(|cx| TerminalView::new(terminal, cx));
-                            pane.terminals.push(terminal_view);
+                        pane.add_terminal(cx);
+                    }
+
+                    // Add editor tabs for open files
+                    for file_path in open_files {
+                        if file_path.exists() {
+                            if let Some(buffer) = buffer_store.update(cx, |store, cx| {
+                                store.open_buffer(file_path.clone(), cx)
+                            }) {
+                                let editor = cx.new(|cx| EditorView::new(buffer, file_path.clone(), cx));
+                                pane.tabs.push(TabItem::Editor(editor));
+                            }
                         }
                     }
-                    pane.active_index = (*active_index).min(pane.terminals.len().saturating_sub(1));
+
+                    // Ensure at least one tab exists
+                    if pane.tabs.is_empty() {
+                        pane.add_terminal(cx);
+                    }
+
+                    pane.active_index = (*active_index).min(pane.tabs.len().saturating_sub(1));
                     pane
                 });
                 // Note: Don't subscribe here - with_root will subscribe to all panes
@@ -283,7 +342,7 @@ impl AppView {
                 };
                 let members: Vec<Member> = members
                     .iter()
-                    .map(|m| Self::create_member_from_config(m, path, cx))
+                    .map(|m| Self::create_member_from_config(m, path, buffer_store, cx))
                     .collect();
                 Member::Axis(PaneAxis {
                     axis,
@@ -369,8 +428,8 @@ impl AppView {
                 pane_group.update(cx, |pg, cx| {
                     if let Some(pane) = pg.active_pane.clone() {
                         pane.update(cx, |p, cx| {
-                            if p.terminals.len() > 1 {
-                                p.active_index = (p.active_index + 1) % p.terminals.len();
+                            if p.tabs.len() > 1 {
+                                p.active_index = (p.active_index + 1) % p.tabs.len();
                                 cx.notify();
                             }
                         });
@@ -400,9 +459,9 @@ impl AppView {
                 pane_group.update(cx, |pg, cx| {
                     if let Some(pane) = pg.active_pane.clone() {
                         pane.update(cx, |p, cx| {
-                            if p.terminals.len() > 1 {
+                            if p.tabs.len() > 1 {
                                 p.active_index = if p.active_index == 0 {
-                                    p.terminals.len() - 1
+                                    p.tabs.len() - 1
                                 } else {
                                     p.active_index - 1
                                 };
@@ -421,14 +480,10 @@ impl AppView {
             if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
                 let should_close_pane = pane_group.update(cx, |pg, cx| {
                     if let Some(pane) = pg.active_pane.clone() {
-                        let (terminals_count, should_close) = pane.update(cx, |p, cx| {
-                            let count = p.terminals.len();
+                        let (tabs_count, should_close) = pane.update(cx, |p, cx| {
+                            let count = p.tabs.len();
                             if count > 1 {
-                                p.terminals.remove(p.active_index);
-                                if p.active_index >= p.terminals.len() {
-                                    p.active_index = p.terminals.len() - 1;
-                                }
-                                cx.notify();
+                                p.remove_tab(p.active_index, cx);
                                 (count - 1, false)
                             } else {
                                 (count, true)

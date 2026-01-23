@@ -430,9 +430,9 @@ impl PaneGroup {
                 PaneEvent::Close => {
                     this.remove_pane(&pane, cx);
                 }
-                PaneEvent::TabMoved | PaneEvent::TerminalAdded | PaneEvent::TerminalClosed => {
+                PaneEvent::TabMoved | PaneEvent::TerminalAdded | PaneEvent::TabClosed => {
                     // Check if pane is empty and should be removed
-                    let is_empty = pane.read(cx).terminals.is_empty();
+                    let is_empty = pane.read(cx).tabs.is_empty();
                     if is_empty {
                         this.remove_pane(&pane, cx);
                     }
@@ -456,7 +456,7 @@ impl PaneGroup {
     ) {
         log::info!("split_pane called: direction={:?}, target={:?}, new_pane={:?}",
             direction, target.entity_id(), new_pane.entity_id());
-        log::info!("  new_pane terminals: {}", new_pane.read(cx).terminals.len());
+        log::info!("  new_pane tabs: {}", new_pane.read(cx).tabs.len());
 
         Self::subscribe_to_pane(&new_pane, cx);
 
@@ -535,7 +535,7 @@ impl PaneGroup {
     pub fn terminal_count(&self, cx: &App) -> usize {
         self.panes()
             .iter()
-            .map(|p| p.read(cx).terminals.len())
+            .map(|p| p.read(cx).terminal_count())
             .sum()
     }
 
@@ -712,9 +712,9 @@ impl PaneGroup {
             Member::Pane(pane) => {
                 let pane_data = pane.read(cx);
                 log::info!(
-                    "{}Pane: {} terminals, active_index={}",
+                    "{}Pane: {} tabs, active_index={}",
                     indent,
-                    pane_data.terminals.len(),
+                    pane_data.tabs.len(),
                     pane_data.active_index
                 );
             }

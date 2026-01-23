@@ -39,6 +39,7 @@ fn default_layout() -> MemberConfig {
     MemberConfig::Pane {
         terminal_count: 1,
         active_index: 0,
+        open_files: Vec::new(),
     }
 }
 
@@ -48,6 +49,8 @@ pub enum MemberConfig {
     Pane {
         terminal_count: usize,
         active_index: usize,
+        #[serde(default)]
+        open_files: Vec<PathBuf>,
     },
     Axis {
         axis: Axis,
