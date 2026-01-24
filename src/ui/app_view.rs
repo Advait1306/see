@@ -1,11 +1,9 @@
 use crate::config::{self, AppState, WorkspaceConfig, MemberConfig};
 use crate::editor::BufferStore;
-use crate::terminal::Terminal;
 use crate::ui::editor_view::EditorView;
 use crate::ui::file_tree::{FileTree, FileTreeEvent};
 use crate::ui::pane::{Pane, Axis, TabItem};
 use crate::ui::pane_group::{Member, PaneAxis, PaneGroup, PaneGroupEvent};
-use crate::ui::TerminalView;
 use crate::workspace::{WorkspaceManager, WorkspaceEvent};
 use gpui::prelude::*;
 use gpui::*;
@@ -14,9 +12,6 @@ use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
 use gpui_component::{Collapsible, Side};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
-
-pub const SIDEBAR_WIDTH: f32 = 200.0;
 
 pub struct AppView {
     workspace_manager: Entity<WorkspaceManager>,
@@ -376,7 +371,7 @@ impl AppView {
         });
 
         let pane_group = cx.new(|cx| {
-            let mut group = PaneGroup::new(path.clone(), cx);
+            let group = PaneGroup::new(path.clone(), cx);
             // Add initial terminal to the pane
             if let Some(pane) = group.active_pane.clone() {
                 pane.update(cx, |p, cx| {
@@ -392,21 +387,6 @@ impl AppView {
         // Switch to the new workspace
         self.select_workspace(new_index, cx);
         self.save_state(cx);
-    }
-
-    fn add_terminal_to_active_pane(&mut self, cx: &mut Context<Self>) {
-        if let Some(workspace_id) = self.active_workspace_id(cx) {
-            if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
-                pane_group.update(cx, |pg, cx| {
-                    if let Some(pane) = pg.active_pane.clone() {
-                        pane.update(cx, |p, cx| {
-                            p.add_terminal(cx);
-                        });
-                    }
-                });
-                self.save_state(cx);
-            }
-        }
     }
 
     pub fn send_to_terminal(&self, input: &str, cx: &mut Context<Self>) {
@@ -478,9 +458,9 @@ impl AppView {
     pub fn close_current_terminal(&mut self, cx: &mut Context<Self>) {
         if let Some(workspace_id) = self.active_workspace_id(cx) {
             if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
-                let should_close_pane = pane_group.update(cx, |pg, cx| {
+                let _should_close_pane = pane_group.update(cx, |pg, cx| {
                     if let Some(pane) = pg.active_pane.clone() {
-                        let (tabs_count, should_close) = pane.update(cx, |p, cx| {
+                        let (_tabs_count, should_close) = pane.update(cx, |p, cx| {
                             let count = p.tabs.len();
                             if count > 1 {
                                 p.remove_tab(p.active_index, cx);
@@ -567,14 +547,6 @@ impl AppView {
                             })),
                     ),
             )
-    }
-
-    pub fn sidebar_width(&self) -> f32 {
-        if self.sidebar_collapsed {
-            48.0
-        } else {
-            SIDEBAR_WIDTH
-        }
     }
 
     pub fn toggle_file_tree(&mut self, cx: &mut Context<Self>) {

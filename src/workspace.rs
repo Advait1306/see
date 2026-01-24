@@ -82,21 +82,4 @@ impl WorkspaceManager {
             }
         }
     }
-
-    pub fn remove_workspace(&mut self, index: usize) {
-        if index < self.workspaces.len() {
-            self.workspaces.remove(index);
-            if let Some(active) = self.active_workspace_index {
-                if active >= self.workspaces.len() {
-                    self.active_workspace_index = if self.workspaces.is_empty() {
-                        None
-                    } else {
-                        Some(self.workspaces.len() - 1)
-                    };
-                } else if active > index {
-                    self.active_workspace_index = Some(active - 1);
-                }
-            }
-        }
-    }
 }

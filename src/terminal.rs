@@ -69,7 +69,6 @@ pub struct Terminal {
     term: Arc<FairMutex<Term<TerminalEventListener>>>,
     notifier: Notifier,
     event_receiver: std::sync::mpsc::Receiver<Event>,
-    pub working_directory: PathBuf,
     size: TerminalSize,
 }
 
@@ -114,7 +113,6 @@ impl Terminal {
             term,
             notifier,
             event_receiver,
-            working_directory,
             size,
         })
     }
@@ -178,11 +176,6 @@ impl Terminal {
         }
     }
 
-    pub fn clear_selection(&self) {
-        let mut term = self.term.lock();
-        term.selection = None;
-    }
-
     pub fn has_selection(&self) -> bool {
         let term = self.term.lock();
         term.selection.is_some()
@@ -191,11 +184,6 @@ impl Terminal {
     pub fn selection_to_string(&self) -> Option<String> {
         let term = self.term.lock();
         term.selection_to_string()
-    }
-
-    pub fn display_offset(&self) -> usize {
-        let term = self.term.lock();
-        term.grid().display_offset()
     }
 
     pub fn mode(&self) -> TermMode {

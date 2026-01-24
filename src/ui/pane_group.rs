@@ -12,13 +12,6 @@ pub enum Member {
 }
 
 impl Member {
-    fn contains_pane(&self, pane: &Entity<Pane>) -> bool {
-        match self {
-            Member::Pane(p) => p == pane,
-            Member::Axis(axis) => axis.members.iter().any(|m| m.contains_pane(pane)),
-        }
-    }
-
     fn render(
         &self,
         cx: &mut Context<PaneGroup>,
@@ -197,9 +190,7 @@ impl PaneAxis {
                 DividerDrag {
                     axis,
                     divider_index,
-                    initial_ratios: self.ratios.clone(),
                     axis_path: axis_path.clone(),
-                    start_position: Point::default(),
                     container_size,
                 },
                 |drag, _, _window, cx| cx.new(|_| drag.clone()),
@@ -328,9 +319,7 @@ impl PaneAxis {
 pub struct DividerDrag {
     axis: Axis,
     divider_index: usize,
-    initial_ratios: Vec<f32>,
     axis_path: Vec<usize>,          // Path to locate axis in nested structure
-    start_position: Point<Pixels>,  // Position when drag started
     container_size: f32,            // Size along axis direction
 }
 
@@ -343,7 +332,6 @@ impl Render for DividerDrag {
 
 pub struct PaneGroup {
     pub root: Member,
-    pub path: PathBuf,
     pub active_pane: Option<Entity<Pane>>,
     drag_bounds: Option<Bounds<Pixels>>,
     // Track the start position for the current drag
@@ -362,9 +350,9 @@ struct DragStart {
 }
 
 pub enum PaneGroupEvent {
-    PaneAdded(Entity<Pane>),
-    PaneRemoved(Entity<Pane>),
-    PaneFocused(Entity<Pane>),
+    PaneAdded(()),
+    PaneRemoved(()),
+    PaneFocused(()),
     StateChanged,
 }
 
@@ -378,26 +366,13 @@ impl PaneGroup {
 
         Self {
             root: Member::Pane(pane.clone()),
-            path,
             active_pane: Some(pane),
             drag_bounds: None,
             drag_start: None,
         }
     }
 
-    pub fn with_pane(path: PathBuf, pane: Entity<Pane>, cx: &mut Context<Self>) -> Self {
-        Self::subscribe_to_pane(&pane, cx);
-
-        Self {
-            root: Member::Pane(pane.clone()),
-            path,
-            active_pane: Some(pane),
-            drag_bounds: None,
-            drag_start: None,
-        }
-    }
-
-    pub fn with_root(path: PathBuf, root: Member, cx: &mut Context<Self>) -> Self {
+    pub fn with_root(_path: PathBuf, root: Member, cx: &mut Context<Self>) -> Self {
         // Subscribe to all panes in the root
         let mut panes = Vec::new();
         root.collect_panes(&mut panes);
@@ -407,15 +382,10 @@ impl PaneGroup {
 
         Self {
             root,
-            path,
             active_pane: panes.first().cloned(),
             drag_bounds: None,
             drag_start: None,
         }
-    }
-
-    pub fn subscribe_to_pane_static(pane: &Entity<Pane>, cx: &mut Context<Self>) {
-        Self::subscribe_to_pane(pane, cx);
     }
 
     fn subscribe_to_pane(pane: &Entity<Pane>, cx: &mut Context<Self>) {
@@ -427,9 +397,6 @@ impl PaneGroup {
                     log::info!("PaneEvent::Split received from pane {:?}, new_pane {:?}", pane_id, new_pane.entity_id());
                     this.split_pane(&pane, new_pane.clone(), *direction, cx);
                 }
-                PaneEvent::Close => {
-                    this.remove_pane(&pane, cx);
-                }
                 PaneEvent::TabMoved | PaneEvent::TerminalAdded | PaneEvent::TabClosed => {
                     // Check if pane is empty and should be removed
                     let is_empty = pane.read(cx).tabs.is_empty();
@@ -440,7 +407,7 @@ impl PaneGroup {
                 }
                 PaneEvent::Focus => {
                     this.active_pane = Some(pane.clone());
-                    cx.emit(PaneGroupEvent::PaneFocused(pane.clone()));
+                    cx.emit(PaneGroupEvent::PaneFocused(()));
                 }
             }
         })
@@ -485,7 +452,7 @@ impl PaneGroup {
         }
 
         self.active_pane = Some(new_pane.clone());
-        cx.emit(PaneGroupEvent::PaneAdded(new_pane));
+        cx.emit(PaneGroupEvent::PaneAdded(()));
         cx.emit(PaneGroupEvent::StateChanged);
         cx.notify();
     }
@@ -494,7 +461,7 @@ impl PaneGroup {
         match &mut self.root {
             Member::Pane(pane) if pane == target => {
                 // Can't remove last pane, but emit event
-                cx.emit(PaneGroupEvent::PaneRemoved(target.clone()));
+                cx.emit(PaneGroupEvent::PaneRemoved(()));
                 return;
             }
             Member::Axis(axis) => {
@@ -513,13 +480,9 @@ impl PaneGroup {
             self.active_pane = self.root.first_pane();
         }
 
-        cx.emit(PaneGroupEvent::PaneRemoved(target.clone()));
+        cx.emit(PaneGroupEvent::PaneRemoved(()));
         cx.emit(PaneGroupEvent::StateChanged);
         cx.notify();
-    }
-
-    pub fn active_pane(&self) -> Option<&Entity<Pane>> {
-        self.active_pane.as_ref()
     }
 
     pub fn panes(&self) -> Vec<Entity<Pane>> {
@@ -530,13 +493,6 @@ impl PaneGroup {
 
     pub fn pane_count(&self) -> usize {
         self.panes().len()
-    }
-
-    pub fn terminal_count(&self, cx: &App) -> usize {
-        self.panes()
-            .iter()
-            .map(|p| p.read(cx).terminal_count())
-            .sum()
     }
 
     fn get_root_ratios(&self) -> Vec<f32> {
@@ -691,7 +647,7 @@ impl Render for PaneGroup {
         div()
             .id("pane-group")
             .size_full()
-            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, _cx| {
+            .on_mouse_move(cx.listener(|this, _event: &MouseMoveEvent, window, _cx| {
                 // Store the current bounds for accurate drag calculations
                 this.drag_bounds = Some(window.bounds());
             }))

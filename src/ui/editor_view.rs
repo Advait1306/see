@@ -120,7 +120,6 @@ impl Selection {
 
 pub struct EditorView {
     buffer: Entity<Buffer>,
-    file_path: PathBuf,
     cursor_line: usize,
     cursor_col: usize,
     scroll_offset: usize,
@@ -138,7 +137,7 @@ pub struct EditorView {
 }
 
 impl EditorView {
-    pub fn new(buffer: Entity<Buffer>, file_path: PathBuf, cx: &mut Context<Self>) -> Self {
+    pub fn new(buffer: Entity<Buffer>, _file_path: PathBuf, cx: &mut Context<Self>) -> Self {
         // Subscribe to buffer events
         let subscription = cx.subscribe(&buffer, |this, _buffer, event, cx| {
             match event {
@@ -176,7 +175,6 @@ impl EditorView {
 
         Self {
             buffer,
-            file_path,
             cursor_line: 0,
             cursor_col: 0,
             scroll_offset: 0,
@@ -196,10 +194,6 @@ impl EditorView {
 
     pub fn buffer(&self) -> &Entity<Buffer> {
         &self.buffer
-    }
-
-    pub fn file_path(&self) -> &PathBuf {
-        &self.file_path
     }
 
     fn ensure_cursor_valid(&mut self, cx: &mut Context<Self>) {
@@ -640,7 +634,7 @@ impl EditorView {
         if self.cursor_col == 0 {
             // Move to end of previous line
             offset -= 1; // This moves past the newline to end of previous line
-            let (line, col) = buffer.offset_to_line_col(offset);
+            let (line, _col) = buffer.offset_to_line_col(offset);
             self.cursor_line = line;
             self.cursor_col = buffer.line_len(line); // Position at end of line
             self.ensure_cursor_visible(cx);

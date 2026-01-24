@@ -390,31 +390,6 @@ impl BatchedTextRun {
     }
 }
 
-// Background rectangle
-struct BackgroundRect {
-    line: i32,
-    col: usize,
-    cell_count: usize,
-    color: Hsla,
-}
-
-impl BackgroundRect {
-    fn paint(&self, origin: gpui::Point<Pixels>, cell_width: Pixels, line_height: Pixels, window: &mut Window) {
-        let pos = gpui::Point::new(
-            origin.x + px(self.col as f32 * f32::from(cell_width)),
-            origin.y + px(self.line as f32 * f32::from(line_height)),
-        );
-        let bounds = Bounds::new(
-            pos,
-            Size {
-                width: cell_width * self.cell_count as f32,
-                height: line_height,
-            },
-        );
-        window.paint_quad(fill(bounds, self.color));
-    }
-}
-
 pub struct TerminalView {
     terminal: Arc<parking_lot::Mutex<Terminal>>,
     focus_handle: FocusHandle,

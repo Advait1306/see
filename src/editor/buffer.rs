@@ -60,7 +60,7 @@ pub struct Buffer {
 impl EventEmitter<BufferEvent> for Buffer {}
 
 impl Buffer {
-    pub fn load(path: PathBuf, cx: &mut Context<Self>) -> io::Result<Self> {
+    pub fn load(path: PathBuf, _cx: &mut Context<Self>) -> io::Result<Self> {
         let file = fs::File::open(&path)?;
         let mtime = file.metadata()?.modified().ok();
         let reader = BufReader::new(file);
@@ -92,11 +92,6 @@ impl Buffer {
         Ok(())
     }
 
-    /// Insert text at offset, recording for undo
-    pub fn insert(&mut self, offset: usize, text: &str, cx: &mut Context<Self>) {
-        self.insert_with_state(offset, text, EditorState::default(), cx);
-    }
-
     /// Insert text at offset with editor state for undo
     pub fn insert_with_state(
         &mut self,
@@ -120,11 +115,6 @@ impl Buffer {
         self.is_dirty = true;
         cx.emit(BufferEvent::Changed);
         cx.notify();
-    }
-
-    /// Delete text from start..end, recording for undo
-    pub fn delete(&mut self, start: usize, end: usize, cx: &mut Context<Self>) {
-        self.delete_with_state(start, end, EditorState::default(), cx);
     }
 
     /// Delete text from start..end with editor state for undo
@@ -242,10 +232,6 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn text(&self) -> String {
-        self.rope.to_string()
-    }
-
     pub fn line(&self, line_idx: usize) -> Option<String> {
         if line_idx < self.rope.len_lines() {
             Some(self.rope.line(line_idx).to_string())
@@ -271,10 +257,6 @@ impl Buffer {
             }
         }
         max_len
-    }
-
-    pub fn len_chars(&self) -> usize {
-        self.rope.len_chars()
     }
 
     pub fn is_dirty(&self) -> bool {

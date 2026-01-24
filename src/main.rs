@@ -81,7 +81,7 @@ fn main() {
         .unwrap();
 
         // Global keystroke interceptor for terminal/workspace switching
-        let keystroke_subscription = cx.intercept_keystrokes(move |event, window, cx| {
+        let keystroke_subscription = cx.intercept_keystrokes(move |event, _window, cx| {
             let key = &event.keystroke;
 
             // Handle tab key - GPUI uses it for focus navigation, but we want it to go to terminal

@@ -101,12 +101,6 @@ impl Pane {
         }
     }
 
-    pub fn with_terminal(mut self, terminal: Entity<TerminalView>) -> Self {
-        self.tabs.push(TabItem::Terminal(terminal));
-        self.terminal_counter += 1;
-        self
-    }
-
     pub fn add_terminal(&mut self, cx: &mut Context<Self>) {
         if let Ok(terminal) = Terminal::new(self.path.clone()) {
             let terminal = Arc::new(parking_lot::Mutex::new(terminal));
@@ -116,13 +110,6 @@ impl Pane {
             self.active_index = self.tabs.len() - 1;
             cx.notify();
         }
-    }
-
-    pub fn add_terminal_view(&mut self, terminal: Entity<TerminalView>, cx: &mut Context<Self>) {
-        self.tabs.push(TabItem::Terminal(terminal));
-        self.terminal_counter += 1;
-        self.active_index = self.tabs.len() - 1;
-        cx.notify();
     }
 
     pub fn add_editor(&mut self, buffer: Entity<Buffer>, file_path: PathBuf, cx: &mut Context<Self>) {
@@ -416,7 +403,6 @@ pub enum PaneEvent {
         direction: SplitDirection,
         new_pane: Entity<Pane>,
     },
-    Close,
     TabMoved,
     TerminalAdded,
     TabClosed,

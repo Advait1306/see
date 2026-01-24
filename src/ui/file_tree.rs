@@ -207,24 +207,11 @@ impl FileTree {
         tree
     }
 
-    pub fn set_root_path(&mut self, path: PathBuf, expanded_paths: HashSet<PathBuf>, cx: &mut Context<Self>) {
-        self.root_path = path.clone();
-        self.expanded_paths = expanded_paths;
-        self.expanded_paths.insert(path.clone());
-        self.watcher = FileWatcher::new(path).ok();
-        self.list_state = None; // Reset list state to be recreated with new data
-        cx.notify();
-    }
-
     pub fn set_expanded_paths(&mut self, expanded_paths: HashSet<PathBuf>, cx: &mut Context<Self>) {
         self.expanded_paths = expanded_paths;
         self.expanded_paths.insert(self.root_path.clone());
         self.refresh_entries(cx);
         cx.notify();
-    }
-
-    pub fn expanded_paths(&self) -> &HashSet<PathBuf> {
-        &self.expanded_paths
     }
 
     fn ensure_list_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -238,7 +225,7 @@ impl FileTree {
             let list_state = cx.new(|cx| ListState::new(delegate, window, cx));
 
             // Subscribe to click events (Confirm) to handle directory toggling and file opening
-            cx.subscribe(&list_state, |this, list_entity, event: &ListEvent, cx| {
+            cx.subscribe(&list_state, |_this, list_entity, event: &ListEvent, cx| {
                 if let ListEvent::Confirm(ix) = event {
                     let entry = list_entity.read(cx).delegate().entries.get(ix.row).cloned();
                     if let Some(entry) = entry {

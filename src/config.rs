@@ -8,12 +8,6 @@ pub const APP_NAME: &str = if cfg!(debug_assertions) {
     "August"
 };
 
-pub const APP_ID: &str = if cfg!(debug_assertions) {
-    "com.august.app.dev"
-} else {
-    "com.august.app"
-};
-
 #[derive(Serialize, Deserialize, Default)]
 pub struct AppState {
     pub workspaces: Vec<WorkspaceConfig>,
