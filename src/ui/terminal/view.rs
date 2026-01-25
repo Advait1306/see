@@ -2,6 +2,7 @@
 
 use super::element::TerminalElement;
 use super::input::key_to_input;
+use crate::commands::{SendShiftTabToTerminal, SendTabToTerminal};
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, PADDING};
 use crate::terminal::Terminal;
 use crate::types::SelectionPhase;
@@ -126,6 +127,14 @@ impl Render for TerminalView {
             .id("terminal-wrapper")
             .key_context("Terminal")
             .track_focus(&focus_handle)
+            .on_action(cx.listener(|this, _: &SendTabToTerminal, _window, cx| {
+                this.write("\t");
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &SendShiftTabToTerminal, _window, cx| {
+                this.write("\x1b[Z"); // Escape sequence for shift-tab
+                cx.notify();
+            }))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _window, cx| {
                 // Handle Cmd+C for copy
                 if event.keystroke.modifiers.platform && event.keystroke.key == "c" {

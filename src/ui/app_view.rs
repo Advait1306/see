@@ -1,3 +1,4 @@
+use crate::commands::*;
 use crate::config::{self, AppState, MemberConfig, WorkspaceConfig};
 use crate::editor::BufferStore;
 use crate::ui::EditorView;
@@ -25,7 +26,6 @@ pub struct AppView {
     workspace_store: Entity<WorkspaceStore>,
     workspace_panes: HashMap<String, Entity<PaneGroup>>,
     focus_handle: FocusHandle,
-    _keystroke_subscription: Option<Subscription>,
     sidebar_collapsed: bool,
     file_tree: Option<Entity<FileTree>>,
     file_tree_visible: bool,
@@ -47,7 +47,6 @@ impl AppView {
             workspace_store,
             workspace_panes: HashMap::new(),
             focus_handle: cx.focus_handle(),
-            _keystroke_subscription: None,
             sidebar_collapsed: false,
             file_tree: None,
             file_tree_visible: false,
@@ -58,10 +57,6 @@ impl AppView {
         self.update_file_tree_path(cx);
         self.save_all_state(cx);
         cx.notify();
-    }
-
-    pub fn set_keystroke_subscription(&mut self, subscription: Subscription) {
-        self._keystroke_subscription = Some(subscription);
     }
 
     // =========================================================================
@@ -423,7 +418,7 @@ impl AppView {
         }
     }
 
-    pub fn next_terminal(&mut self, cx: &mut Context<Self>) {
+    pub fn next_pane(&mut self, cx: &mut Context<Self>) {
         if let Some(workspace_id) = self.active_workspace_id(cx) {
             if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
                 pane_group.update(cx, |pg, cx| {
@@ -454,7 +449,7 @@ impl AppView {
         self.save_state(cx);
     }
 
-    pub fn prev_terminal(&mut self, cx: &mut Context<Self>) {
+    pub fn prev_pane(&mut self, cx: &mut Context<Self>) {
         if let Some(workspace_id) = self.active_workspace_id(cx) {
             if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
                 pane_group.update(cx, |pg, cx| {
@@ -476,7 +471,7 @@ impl AppView {
         }
     }
 
-    pub fn close_current_terminal(&mut self, cx: &mut Context<Self>) {
+    pub fn close_current_pane(&mut self, cx: &mut Context<Self>) {
         if let Some(workspace_id) = self.active_workspace_id(cx) {
             if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
                 let _should_close_pane = pane_group.update(cx, |pg, cx| {
@@ -491,7 +486,7 @@ impl AppView {
                             }
                         });
 
-                        // If pane has only one terminal and there are multiple panes, remove the pane
+                        // If pane has only one tab and there are multiple panes, remove the pane
                         if should_close && pg.pane_count() > 1 {
                             pg.remove_pane(&pane, cx);
                         }
@@ -585,6 +580,12 @@ impl AppView {
         cx.notify();
     }
 
+    pub fn toggle_workspace_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_collapsed = !self.sidebar_collapsed;
+        self.save_ui_state();
+        cx.notify();
+    }
+
     fn update_file_tree_path(&mut self, cx: &mut Context<Self>) {
         if self.file_tree_visible {
             if let Some(workspace) = self.workspace_store.read(cx).active_workspace() {
@@ -646,6 +647,30 @@ impl Render for AppView {
             .id("app-view")
             .key_context("AppView")
             .track_focus(&focus_handle)
+            // Pane commands
+            .on_action(cx.listener(|this, _: &ClosePane, _window, cx| {
+                this.close_current_pane(cx);
+            }))
+            .on_action(cx.listener(|this, _: &PrevPane, _window, cx| {
+                this.prev_pane(cx);
+            }))
+            .on_action(cx.listener(|this, _: &NextPane, _window, cx| {
+                this.next_pane(cx);
+            }))
+            // Workspace commands
+            .on_action(cx.listener(|this, _: &PrevWorkspace, _window, cx| {
+                this.prev_workspace(cx);
+            }))
+            .on_action(cx.listener(|this, _: &NextWorkspace, _window, cx| {
+                this.next_workspace(cx);
+            }))
+            // UI commands
+            .on_action(cx.listener(|this, _: &ToggleWorkspaceSidebar, _window, cx| {
+                this.toggle_workspace_sidebar(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleFileTree, _window, cx| {
+                this.toggle_file_tree(cx);
+            }))
             .size_full()
             .flex()
             .flex_col()
