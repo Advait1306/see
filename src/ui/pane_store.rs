@@ -1,10 +1,14 @@
-use crate::config;
-use crate::types::TabConfig;
-use crate::ui::pane::{Axis, Pane, PaneEvent, SplitDirection};
+use crate::config::{self, MemberConfig};
+use crate::editor::EditorStore;
+use crate::terminal_store::TerminalStore;
+use crate::types::{EditorTabConfig, TabConfig, TerminalTabConfig};
+use crate::ui::pane::{Axis, Pane, PaneEvent, SplitDirection, TabItem};
+use crate::ui::{EditorView, TerminalView};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 const MIN_PANE_SIZE: f32 = 100.0;
 const DIVIDER_SIZE: f32 = 4.0;
@@ -85,10 +89,7 @@ impl Member {
         container_bounds: Bounds<Pixels>,
     ) -> impl IntoElement {
         match self {
-            Member::Pane(pane) => div()
-                .size_full()
-                .child(pane.clone())
-                .into_any_element(),
+            Member::Pane(pane) => div().size_full().child(pane.clone()).into_any_element(),
             Member::Axis(axis) => axis
                 .render_with_path(cx, group_entity, path, container_bounds)
                 .into_any_element(),
@@ -241,12 +242,8 @@ impl PaneAxis {
                 format!("divider-{:?}-{}", axis_path, divider_index).into(),
             ))
             .flex_shrink_0()
-            .when(is_horizontal, |el| {
-                el.w(px(DIVIDER_SIZE)).h_full()
-            })
-            .when(!is_horizontal, |el| {
-                el.h(px(DIVIDER_SIZE)).w_full()
-            })
+            .when(is_horizontal, |el| el.w(px(DIVIDER_SIZE)).h_full())
+            .when(!is_horizontal, |el| el.h(px(DIVIDER_SIZE)).w_full())
             .cursor(if is_horizontal {
                 CursorStyle::ResizeLeftRight
             } else {
@@ -282,12 +279,6 @@ impl PaneAxis {
 
                     if needs_init {
                         let ratios = this.get_ratios_at_path(&drag_data.axis_path);
-                        log::info!(
-                            "DRAG START: path={:?}, axis={:?}, idx={}",
-                            drag_data.axis_path,
-                            drag_data.axis,
-                            drag_data.divider_index
-                        );
                         this.drag_start = Some(DragStart {
                             axis_path: drag_data.axis_path.clone(),
                             divider_index: drag_data.divider_index,
@@ -387,8 +378,8 @@ impl PaneAxis {
 pub struct DividerDrag {
     axis: Axis,
     divider_index: usize,
-    axis_path: Vec<usize>,          // Path to locate axis in nested structure
-    container_size: f32,            // Size along axis direction
+    axis_path: Vec<usize>, // Path to locate axis in nested structure
+    container_size: f32,   // Size along axis direction
 }
 
 impl Render for DividerDrag {
@@ -425,6 +416,182 @@ pub enum PaneStoreEvent {
 impl EventEmitter<PaneStoreEvent> for PaneStore {}
 
 impl PaneStore {
+    pub fn load(
+        workspace_id: String,
+        workspace_path: PathBuf,
+        buffer_store: Entity<EditorStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let layout = Self::load_layout_with_migration(&workspace_id, &workspace_path);
+        let member = Self::create_member_from_layout(&layout, &workspace_path, &buffer_store, cx);
+        let active_pane = member.first_pane();
+        let mut store = Self::with_root(workspace_id, member, cx);
+        store.active_pane = active_pane;
+
+        if let Some(pane) = &store.active_pane {
+            let tabs_count = pane.read(cx).tabs.len();
+            if tabs_count == 0 {
+                pane.update(cx, |p, cx| {
+                    p.add_terminal(cx);
+                });
+            }
+        }
+
+        store
+    }
+
+    fn load_layout_with_migration(workspace_id: &str, workspace_path: &PathBuf) -> LayoutNode {
+        let layout_path = config::layout_path(workspace_id);
+        if layout_path.exists() {
+            config::load_json(&layout_path)
+        } else if config::legacy_state_exists() {
+            log::info!(
+                "Migrating layout for workspace {} from legacy state.json",
+                workspace_id
+            );
+            let legacy = config::load_state();
+            if let Some(wc) = legacy.workspaces.iter().find(|w| w.id == workspace_id) {
+                let layout = Self::convert_member_config_to_layout(&wc.layout, workspace_path);
+                config::save_json(&layout_path, &layout);
+                layout
+            } else {
+                LayoutNode::default()
+            }
+        } else {
+            LayoutNode::default()
+        }
+    }
+
+    fn create_member_from_layout(
+        layout: &LayoutNode,
+        path: &PathBuf,
+        buffer_store: &Entity<EditorStore>,
+        cx: &mut Context<Self>,
+    ) -> Member {
+        match layout {
+            LayoutNode::Pane(pane_config) => {
+                let pane = cx.new(|cx| {
+                    let mut pane = Pane::new(path.clone(), cx);
+
+                    for tab_config in &pane_config.tabs {
+                        match tab_config {
+                            TabConfig::Terminal(term_config) => {
+                                let cwd = if term_config.cwd.exists() {
+                                    term_config.cwd.clone()
+                                } else {
+                                    path.clone()
+                                };
+                                let terminal_store = TerminalStore::global(cx);
+                                if let Some((_id, terminal)) =
+                                    terminal_store.update(cx, |store, cx| {
+                                        store.create_terminal(cwd, cx)
+                                    })
+                                {
+                                    let terminal_view = cx.new(|cx| TerminalView::new(terminal, cx));
+                                    pane.tabs.push(TabItem::Terminal(terminal_view));
+                                }
+                            }
+                            TabConfig::Editor(editor_config) => {
+                                if editor_config.path.exists() {
+                                    if let Some(buffer) = buffer_store.update(cx, |store, cx| {
+                                        store.open_buffer(editor_config.path.clone(), cx)
+                                    }) {
+                                        let editor = cx.new(|cx| {
+                                            EditorView::new(buffer, editor_config.path.clone(), cx)
+                                        });
+                                        pane.tabs.push(TabItem::Editor(editor));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if pane.tabs.is_empty() {
+                        pane.add_terminal(cx);
+                    }
+
+                    pane.active_index =
+                        pane_config.active_index.min(pane.tabs.len().saturating_sub(1));
+                    pane
+                });
+
+                Member::Pane(pane)
+            }
+            LayoutNode::Split {
+                axis,
+                ratios,
+                children,
+            } => {
+                let axis = Axis::from(*axis);
+                let members: Vec<Member> = children
+                    .iter()
+                    .map(|child| Self::create_member_from_layout(child, path, buffer_store, cx))
+                    .collect();
+
+                Member::Axis(PaneAxis {
+                    axis,
+                    members,
+                    ratios: ratios.clone(),
+                })
+            }
+        }
+    }
+
+    fn convert_member_config_to_layout(config: &MemberConfig, default_path: &PathBuf) -> LayoutNode {
+        match config {
+            MemberConfig::Pane {
+                terminal_count,
+                active_index,
+                open_files,
+            } => {
+                let mut tabs = Vec::new();
+
+                for _ in 0..*terminal_count {
+                    tabs.push(TabConfig::Terminal(TerminalTabConfig {
+                        cwd: default_path.clone(),
+                    }));
+                }
+
+                for file_path in open_files {
+                    tabs.push(TabConfig::Editor(EditorTabConfig {
+                        path: file_path.clone(),
+                    }));
+                }
+
+                if tabs.is_empty() {
+                    tabs.push(TabConfig::Terminal(TerminalTabConfig {
+                        cwd: default_path.clone(),
+                    }));
+                }
+
+                LayoutNode::Pane(PaneConfig {
+                    tabs,
+                    active_index: *active_index,
+                })
+            }
+            MemberConfig::Axis {
+                axis,
+                ratios,
+                members,
+            } => {
+                let layout_axis = match axis {
+                    config::Axis::Horizontal => LayoutAxis::Horizontal,
+                    config::Axis::Vertical => LayoutAxis::Vertical,
+                };
+                let children: Vec<LayoutNode> = members
+                    .iter()
+                    .map(|m| Self::convert_member_config_to_layout(m, default_path))
+                    .collect();
+
+                LayoutNode::Split {
+                    axis: layout_axis,
+                    ratios: ratios.clone(),
+                    children,
+                }
+            }
+        }
+    }
+
     pub fn with_root(workspace_id: String, root: Member, cx: &mut Context<Self>) -> Self {
         let mut panes = Vec::new();
         root.collect_panes(&mut panes);
@@ -455,9 +622,7 @@ impl PaneStore {
         match member {
             Member::Pane(pane) => {
                 let pane = pane.read(cx);
-                let tabs = pane.tabs.iter()
-                    .map(|tab| tab.to_config(cx))
-                    .collect();
+                let tabs = pane.tabs.iter().map(|tab| tab.to_config(cx)).collect();
 
                 LayoutNode::Pane(PaneConfig {
                     tabs,
@@ -467,7 +632,9 @@ impl PaneStore {
             Member::Axis(axis) => LayoutNode::Split {
                 axis: axis.axis.into(),
                 ratios: axis.ratios.clone(),
-                children: axis.members.iter()
+                children: axis
+                    .members
+                    .iter()
                     .map(|m| self.collect_member_layout(m, cx))
                     .collect(),
             },
@@ -475,25 +642,23 @@ impl PaneStore {
     }
 
     fn subscribe_to_pane(pane: &Entity<Pane>, cx: &mut Context<Self>) {
-        let pane_id = pane.entity_id();
-        log::info!("subscribe_to_pane: subscribing to pane {:?}", pane_id);
-        cx.subscribe(pane, move |this, pane, event, cx| {
-            match event {
-                PaneEvent::Split { direction, new_pane } => {
-                    log::info!("PaneEvent::Split received from pane {:?}, new_pane {:?}", pane_id, new_pane.entity_id());
-                    this.split_pane(&pane, new_pane.clone(), *direction, cx);
+        cx.subscribe(pane, move |this, pane, event, cx| match event {
+            PaneEvent::Split {
+                direction,
+                new_pane,
+            } => {
+                this.split_pane(&pane, new_pane.clone(), *direction, cx);
+            }
+            PaneEvent::TabMoved | PaneEvent::TerminalAdded | PaneEvent::TabClosed => {
+                let is_empty = pane.read(cx).tabs.is_empty();
+                if is_empty {
+                    this.remove_pane(&pane, cx);
                 }
-                PaneEvent::TabMoved | PaneEvent::TerminalAdded | PaneEvent::TabClosed => {
-                    let is_empty = pane.read(cx).tabs.is_empty();
-                    if is_empty {
-                        this.remove_pane(&pane, cx);
-                    }
-                    cx.emit(PaneStoreEvent::StateChanged);
-                }
-                PaneEvent::Focus => {
-                    this.active_pane = Some(pane.clone());
-                    cx.emit(PaneStoreEvent::PaneFocused);
-                }
+                cx.emit(PaneStoreEvent::StateChanged);
+            }
+            PaneEvent::Focus => {
+                this.active_pane = Some(pane.clone());
+                cx.emit(PaneStoreEvent::PaneFocused);
             }
         })
         .detach();
@@ -506,15 +671,10 @@ impl PaneStore {
         direction: SplitDirection,
         cx: &mut Context<Self>,
     ) {
-        log::info!("split_pane called: direction={:?}, target={:?}, new_pane={:?}",
-            direction, target.entity_id(), new_pane.entity_id());
-        log::info!("  new_pane tabs: {}", new_pane.read(cx).tabs.len());
-
         Self::subscribe_to_pane(&new_pane, cx);
 
         match &mut self.root {
             Member::Pane(pane) if pane == target => {
-                log::info!("  Splitting root pane");
                 let split_axis = direction.axis();
                 let is_before = direction.is_before();
 
@@ -525,10 +685,9 @@ impl PaneStore {
                     vec![old_pane, Member::Pane(new_pane.clone())]
                 };
                 self.root = Member::Axis(PaneAxis::new(split_axis, members));
-                log::info!("  Created axis with {} members", 2);
+
             }
             Member::Axis(axis) => {
-                log::info!("  Splitting within existing axis");
                 axis.find_and_split_pane(target, new_pane.clone(), direction, cx);
             }
             _ => {
@@ -686,12 +845,6 @@ impl PaneStore {
             }
 
             if let Some(axis) = self.get_axis_at_path_mut(&drag_data.axis_path) {
-                log::info!(
-                    "APPLYING DRAG: path={:?}, axis={:?}, new_ratios={:?}",
-                    drag_data.axis_path,
-                    drag_data.axis,
-                    new_ratios
-                );
                 axis.ratios = new_ratios;
                 cx.emit(PaneStoreEvent::StateChanged);
                 cx.notify();
@@ -750,24 +903,7 @@ impl Render for PaneStore {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let group_entity = cx.entity().clone();
 
-        let root_type = match &self.root {
-            Member::Pane(_) => "Pane (single, no dividers)",
-            Member::Axis(a) => {
-                if a.members.len() > 1 {
-                    "Axis (multiple members, should have dividers)"
-                } else {
-                    "Axis (single member, no dividers)"
-                }
-            }
-        };
-        log::info!("PaneStore::render - root type: {}", root_type);
-        self.log_structure(cx);
-
         let container_bounds = self.drag_bounds.unwrap_or_else(|| window.bounds());
-        log::info!(
-            "PaneStore::render - container_bounds: {:?}",
-            container_bounds
-        );
 
         div()
             .id("pane-store")
@@ -776,41 +912,5 @@ impl Render for PaneStore {
                 this.drag_bounds = Some(window.bounds());
             }))
             .child(self.root.render(cx, group_entity, vec![], container_bounds))
-    }
-}
-
-impl PaneStore {
-    fn log_structure(&self, cx: &App) {
-        log::info!("=== PaneStore Structure ===");
-        self.log_member(&self.root, 0, cx);
-        log::info!("===========================");
-    }
-
-    fn log_member(&self, member: &Member, depth: usize, cx: &App) {
-        let indent = "  ".repeat(depth);
-        match member {
-            Member::Pane(pane) => {
-                let pane_data = pane.read(cx);
-                log::info!(
-                    "{}Pane: {} tabs, active_index={}",
-                    indent,
-                    pane_data.tabs.len(),
-                    pane_data.active_index
-                );
-            }
-            Member::Axis(axis) => {
-                log::info!(
-                    "{}Axis({:?}): {} members, ratios={:?}",
-                    indent,
-                    axis.axis,
-                    axis.members.len(),
-                    axis.ratios
-                );
-                for (i, m) in axis.members.iter().enumerate() {
-                    log::info!("{}  [{}]:", indent, i);
-                    self.log_member(m, depth + 2, cx);
-                }
-            }
-        }
     }
 }

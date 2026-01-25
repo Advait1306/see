@@ -1,3 +1,4 @@
+use crate::editor::EditorStore;
 use crate::file_tree_store::{FileTreeStore, FileTreeStoreEvent};
 use crate::ui::pane_store::{PaneStore, PaneStoreEvent};
 use gpui::*;
@@ -5,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub enum WorkspaceEvent {
-    Updated,
     FileTreeChanged,
     PaneLayoutChanged,
 }
@@ -24,14 +23,17 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new(
-        id: String,
-        name: String,
-        path: PathBuf,
-        file_tree_store: Entity<FileTreeStore>,
-        pane_store: Entity<PaneStore>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(id: String, name: String, path: PathBuf, cx: &mut Context<Self>) -> Self {
+        let buffer_store = EditorStore::global(cx);
+
+        let file_tree_store = cx.new(|cx| FileTreeStore::new(id.clone(), path.clone(), cx));
+
+        let pane_store = {
+            let id = id.clone();
+            let path = path.clone();
+            cx.new(|cx| PaneStore::load(id, path, buffer_store, cx))
+        };
+
         let mut subscriptions = Vec::new();
 
         subscriptions.push(cx.subscribe(&file_tree_store, |_this, _store, event, cx| match event {
@@ -59,34 +61,12 @@ impl Workspace {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    #[allow(dead_code)]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    #[allow(dead_code)]
-    pub fn path(&self) -> &PathBuf {
-        &self.path
-    }
-
     pub fn file_tree_store(&self) -> &Entity<FileTreeStore> {
         &self.file_tree_store
     }
 
     pub fn pane_store(&self) -> &Entity<PaneStore> {
         &self.pane_store
-    }
-
-    #[allow(dead_code)]
-    pub fn set_name(&mut self, name: String, cx: &mut Context<Self>) {
-        self.name = name;
-        cx.emit(WorkspaceEvent::Updated);
-        cx.notify();
     }
 }
 
@@ -98,15 +78,6 @@ pub struct WorkspaceData {
 }
 
 impl WorkspaceData {
-    #[allow(dead_code)]
-    pub fn from_workspace(workspace: &Workspace) -> Self {
-        Self {
-            id: workspace.id.clone(),
-            name: workspace.name.clone(),
-            path: workspace.path.clone(),
-        }
-    }
-
     pub fn from_entity(workspace: &Entity<Workspace>, cx: &App) -> Self {
         let ws = workspace.read(cx);
         Self {
