@@ -39,8 +39,8 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-q", Quit, None),
         // Pane management (terminal, editor, etc.)
         KeyBinding::new("cmd-w", ClosePane, None),
-        KeyBinding::new("cmd-shift-[", PrevPane, None),
-        KeyBinding::new("cmd-shift-]", NextPane, None),
+        KeyBinding::new("cmd-{", PrevPane, None),
+        KeyBinding::new("cmd-}", NextPane, None),
         // Workspace switching
         KeyBinding::new("cmd-alt-[", PrevWorkspace, None),
         KeyBinding::new("cmd-alt-]", NextWorkspace, None),
