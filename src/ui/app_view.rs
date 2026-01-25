@@ -1,10 +1,10 @@
 use crate::commands::*;
 use crate::config;
+use crate::stores::{PaneStore, WindowStore, WorkspaceStore};
 use crate::ui::file_tree::FileTree;
-use crate::ui::pane_store::PaneStore;
+use crate::ui::pane_group::PaneGroupView;
 use crate::ui::workspace_sidebar::WorkspaceSidebar;
-use crate::window_store::WindowStore;
-use crate::workspace::{Workspace, WorkspaceStore};
+use crate::workspace::Workspace;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;
@@ -48,6 +48,11 @@ impl WindowView {
     fn active_pane_store(&self, cx: &App) -> Option<Entity<PaneStore>> {
         self.active_workspace(cx)
             .map(|ws| ws.read(cx).pane_store().clone())
+    }
+
+    fn active_pane_group_view(&self, cx: &App) -> Option<Entity<PaneGroupView>> {
+        self.active_workspace(cx)
+            .map(|ws| ws.read(cx).pane_group_view().clone())
     }
 
     pub fn toggle_file_tree(&mut self, cx: &mut Context<Self>) {
@@ -133,7 +138,7 @@ const TITLE_BAR_HEIGHT: f32 = 38.0;
 
 impl Render for WindowView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let pane_store = self.active_pane_store(cx);
+        let pane_group_view = self.active_pane_group_view(cx);
         let file_tree_visible = self.file_tree_visible(cx);
         let sidebar_collapsed = self.sidebar_collapsed(cx);
 
@@ -249,8 +254,8 @@ impl Render for WindowView {
                                     .flex_col()
                                     .overflow_hidden()
                                     .map(|el| {
-                                        if let Some(ps) = pane_store.clone() {
-                                            el.child(ps)
+                                        if let Some(pgv) = pane_group_view.clone() {
+                                            el.child(pgv)
                                         } else {
                                             el
                                         }

@@ -2,7 +2,8 @@ use gpui::*;
 use serde::{Deserialize, Serialize};
 
 use crate::config;
-use crate::workspace::{WorkspaceStore, WorkspaceStoreEvent};
+use crate::workspace::Workspace;
+use super::{WorkspaceStore, WorkspaceStoreEvent};
 
 #[derive(Clone)]
 pub enum WindowStoreEvent {
@@ -96,7 +97,7 @@ impl WindowStore {
         self.active_workspace_id.as_ref()
     }
 
-    pub fn active_workspace<'a>(&'a self, cx: &'a App) -> Option<&'a Entity<crate::workspace::Workspace>> {
+    pub fn active_workspace<'a>(&'a self, cx: &'a App) -> Option<&'a Entity<Workspace>> {
         self.active_workspace_id.as_ref().and_then(|id| {
             self.workspace_store.read(cx).get_workspace(id)
         })

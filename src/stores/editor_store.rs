@@ -1,4 +1,4 @@
-use super::buffer::{Buffer, BufferEvent};
+use crate::editor::buffer::{Buffer, BufferEvent};
 use gpui::prelude::*;
 use gpui::*;
 use std::collections::HashMap;

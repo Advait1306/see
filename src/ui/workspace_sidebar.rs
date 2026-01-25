@@ -1,5 +1,4 @@
-use crate::window_store::{WindowStore, WindowStoreEvent};
-use crate::workspace::{WorkspaceStore, WorkspaceStoreEvent};
+use crate::stores::{WindowStore, WindowStoreEvent, WorkspaceStore, WorkspaceStoreEvent};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::Side;

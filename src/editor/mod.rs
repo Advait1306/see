@@ -1,5 +1,3 @@
-mod buffer;
-mod editor_store;
+pub mod buffer;
 
 pub use buffer::{Buffer, BufferEvent, EditorState};
-pub use editor_store::EditorStore;

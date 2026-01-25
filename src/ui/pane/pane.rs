@@ -1,97 +1,18 @@
-use crate::editor::Buffer;
-use crate::terminal_store::TerminalStore;
-use crate::types::{Tab, TabConfig};
-use crate::ui::EditorView;
+use crate::stores::TerminalStore;
 use crate::ui::TerminalView;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SplitDirection {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-impl SplitDirection {
-    pub fn axis(&self) -> Axis {
-        match self {
-            SplitDirection::Up | SplitDirection::Down => Axis::Vertical,
-            SplitDirection::Left | SplitDirection::Right => Axis::Horizontal,
-        }
-    }
-
-    pub fn is_before(&self) -> bool {
-        matches!(self, SplitDirection::Up | SplitDirection::Left)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Axis {
-    Horizontal,
-    Vertical,
-}
-
-// =============================================================================
-// TabItem Enum
-// =============================================================================
-
-/// Represents a tab item which can be either a terminal or an editor
-#[derive(Clone)]
-pub enum TabItem {
-    Terminal(Entity<TerminalView>),
-    Editor(Entity<EditorView>),
-}
-
-impl TabItem {
-    pub fn label(&self, cx: &App) -> String {
-        match self {
-            TabItem::Terminal(t) => t.read(cx).label(cx),
-            TabItem::Editor(e) => e.read(cx).label(cx),
-        }
-    }
-
-    pub fn to_config(&self, cx: &App) -> TabConfig {
-        match self {
-            TabItem::Terminal(t) => t.read(cx).to_config(cx),
-            TabItem::Editor(e) => e.read(cx).to_config(cx),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct DraggedTab {
-    pub pane: Entity<Pane>,
-    pub tab: TabItem,
-    pub index: usize,
-}
-
-impl Render for DraggedTab {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let label = self.tab.label(cx);
-        let theme = cx.theme();
-        div()
-            .px_3()
-            .py_1()
-            .bg(theme.border)
-            .border_1()
-            .border_color(theme.list_active)
-            .rounded_md()
-            .text_color(theme.foreground)
-            .text_xs()
-            .child(label)
-    }
-}
+use super::{DraggedTab, PaneEvent, SplitDirection, TabItem};
 
 pub struct Pane {
     pub tabs: Vec<TabItem>,
     pub active_index: usize,
     pub focus_handle: FocusHandle,
     pub path: PathBuf,
-    terminal_counter: usize, // For naming terminals
+    terminal_counter: usize,
 }
 
 impl Pane {
@@ -107,6 +28,7 @@ impl Pane {
 
     pub fn add_terminal(&mut self, cx: &mut Context<Self>) {
         let terminal_store = TerminalStore::global(cx);
+        // TODO(fix): Terminal view is gotten added as an entity which shouldn't be happening
         let result = terminal_store.update(cx, |store, cx| {
             store.create_terminal(self.path.clone(), cx)
         });
@@ -118,14 +40,6 @@ impl Pane {
             self.active_index = self.tabs.len() - 1;
             cx.notify();
         }
-    }
-
-    #[allow(dead_code)]
-    pub fn add_editor(&mut self, buffer: Entity<Buffer>, file_path: PathBuf, cx: &mut Context<Self>) {
-        let editor_view = cx.new(|cx| EditorView::new(buffer, file_path, cx));
-        self.tabs.push(TabItem::Editor(editor_view));
-        self.active_index = self.tabs.len() - 1;
-        cx.notify();
     }
 
     pub fn add_tab(&mut self, tab: TabItem, cx: &mut Context<Self>) {
@@ -152,29 +66,6 @@ impl Pane {
 
     pub fn active_tab(&self) -> Option<&TabItem> {
         self.tabs.get(self.active_index)
-    }
-
-    #[allow(dead_code)]
-    pub fn terminal_count(&self) -> usize {
-        self.tabs
-            .iter()
-            .filter(|tab| matches!(tab, TabItem::Terminal(_)))
-            .count()
-    }
-
-    #[allow(dead_code)]
-    pub fn open_file_paths(&self, cx: &App) -> Vec<PathBuf> {
-        self.tabs
-            .iter()
-            .filter_map(|tab| {
-                if let TabItem::Editor(editor) = tab {
-                    let editor_view = editor.read(cx);
-                    Some(editor_view.buffer().read(cx).file_path().clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
     }
 
     pub fn select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -405,17 +296,6 @@ impl Pane {
             });
         });
     }
-}
-
-pub enum PaneEvent {
-    Split {
-        direction: SplitDirection,
-        new_pane: Entity<Pane>,
-    },
-    TabMoved,
-    TerminalAdded,
-    TabClosed,
-    Focus,
 }
 
 impl EventEmitter<PaneEvent> for Pane {}

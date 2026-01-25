@@ -1,6 +1,5 @@
-use crate::editor::EditorStore;
-use crate::file_tree_store::{FileTreeStore, FileTreeStoreEvent};
-use crate::ui::pane_store::{PaneStore, PaneStoreEvent};
+use crate::stores::{EditorStore, FileTreeStore, FileTreeStoreEvent, PaneStore, PaneStoreEvent};
+use crate::ui::pane_group::PaneGroupView;
 use gpui::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -19,6 +18,7 @@ pub struct Workspace {
     pub path: PathBuf,
     file_tree_store: Entity<FileTreeStore>,
     pane_store: Entity<PaneStore>,
+    pane_group_view: Entity<PaneGroupView>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -32,6 +32,11 @@ impl Workspace {
             let id = id.clone();
             let path = path.clone();
             cx.new(|cx| PaneStore::load(id, path, buffer_store, cx))
+        };
+
+        let pane_group_view = {
+            let pane_store = pane_store.clone();
+            cx.new(|cx| PaneGroupView::new(pane_store, cx))
         };
 
         let mut subscriptions = Vec::new();
@@ -57,6 +62,7 @@ impl Workspace {
             path,
             file_tree_store,
             pane_store,
+            pane_group_view,
             _subscriptions: subscriptions,
         }
     }
@@ -67,6 +73,10 @@ impl Workspace {
 
     pub fn pane_store(&self) -> &Entity<PaneStore> {
         &self.pane_store
+    }
+
+    pub fn pane_group_view(&self) -> &Entity<PaneGroupView> {
+        &self.pane_group_view
     }
 }
 

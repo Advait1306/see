@@ -1,8 +1,6 @@
-use crate::editor::EditorStore;
-use crate::file_tree_store::FileEntry;
-use crate::ui::pane::TabItem;
+use crate::stores::{EditorStore, FileEntry, WindowStore};
 use crate::ui::EditorView;
-use crate::window_store::WindowStore;
+use crate::ui::pane::TabItem;
 use crate::workspace::{Workspace, WorkspaceEvent};
 use gpui::prelude::*;
 use gpui::*;
@@ -65,60 +63,49 @@ impl ListDelegate for FileTreeDelegate {
         let foreground_color = theme.foreground;
 
         Some(NonSelectableItem(
-            ListItem::new(ix)
-                .py_0()
-                .px_0()
-                .child(
-                    div()
-                        .h(px(24.0))
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .gap(px(4.0))
-                        .pl(px(8.0 + (depth as f32 * 16.0)))
-                        .pr(px(8.0))
-                        .child(
-                            div()
-                                .w(px(16.0))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .when(is_dir, |el| {
-                                    let chevron_icon = if is_expanded {
-                                        IconName::ChevronDown
-                                    } else {
-                                        IconName::ChevronRight
-                                    };
-                                    el.child(
-                                        Icon::new(chevron_icon)
-                                            .xsmall()
-                                            .text_color(muted_color),
-                                    )
-                                }),
-                        )
-                        .child(div().flex().items_center().child(if is_dir {
-                            let folder_icon = if is_expanded {
-                                IconName::FolderOpen
-                            } else {
-                                IconName::Folder
-                            };
-                            Icon::new(folder_icon)
-                                .small()
-                                .text_color(blue_color)
+            ListItem::new(ix).py_0().px_0().child(
+                div()
+                    .h(px(24.0))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .pl(px(8.0 + (depth as f32 * 16.0)))
+                    .pr(px(8.0))
+                    .child(
+                        div()
+                            .w(px(16.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(is_dir, |el| {
+                                let chevron_icon = if is_expanded {
+                                    IconName::ChevronDown
+                                } else {
+                                    IconName::ChevronRight
+                                };
+                                el.child(Icon::new(chevron_icon).xsmall().text_color(muted_color))
+                            }),
+                    )
+                    .child(div().flex().items_center().child(if is_dir {
+                        let folder_icon = if is_expanded {
+                            IconName::FolderOpen
                         } else {
-                            Icon::new(IconName::File)
-                                .small()
-                                .text_color(muted_color)
-                        }))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(foreground_color)
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .child(name),
-                        ),
-                ),
+                            IconName::Folder
+                        };
+                        Icon::new(folder_icon).small().text_color(blue_color)
+                    } else {
+                        Icon::new(IconName::File).small().text_color(muted_color)
+                    }))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(foreground_color)
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(name),
+                    ),
+            ),
         ))
     }
 
@@ -154,12 +141,9 @@ pub struct FileTree {
 }
 
 impl FileTree {
-    pub fn new(
-        window_store: Entity<WindowStore>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(window_store: Entity<WindowStore>, cx: &mut Context<Self>) -> Self {
         let window_store_sub = cx.subscribe(&window_store, |this, _store, event, cx| {
-            use crate::window_store::WindowStoreEvent;
+            use crate::stores::WindowStoreEvent;
             match event {
                 WindowStoreEvent::ActiveWorkspaceChanged => {
                     this.refresh_entries(cx);
@@ -222,9 +206,7 @@ impl FileTree {
         };
 
         let buffer_store = EditorStore::global(cx);
-        let buffer = buffer_store.update(cx, |store, cx| {
-            store.open_buffer(path.clone(), cx)
-        });
+        let buffer = buffer_store.update(cx, |store, cx| store.open_buffer(path.clone(), cx));
 
         let Some(buffer) = buffer else {
             log::error!("Failed to open buffer for {:?}", path);
@@ -234,6 +216,7 @@ impl FileTree {
         let pane_store = workspace.read(cx).pane_store().clone();
         pane_store.update(cx, |ps, cx| {
             if let Some(pane) = ps.active_pane.clone() {
+                // TODO: (fix) add a speacial function to add editors. Currently views are being added as Entities, that shouldn't be the case.
                 pane.update(cx, |p, cx| {
                     let editor_view = cx.new(|cx| EditorView::new(buffer, path, cx));
                     p.tabs.push(TabItem::Editor(editor_view));

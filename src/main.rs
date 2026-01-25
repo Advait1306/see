@@ -2,25 +2,20 @@ mod commands;
 mod config;
 mod constants;
 mod editor;
-mod file_tree_store;
 mod file_watcher;
+mod stores;
 mod terminal;
-mod terminal_store;
 mod types;
 mod ui;
-mod window_store;
 mod workspace;
 
 use commands::Quit;
-use editor::EditorStore;
 use gpui::*;
 use gpui_component::Root;
 use gpui_component_assets::Assets;
 use std::borrow::Cow;
-use terminal_store::TerminalStore;
+use stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
 use ui::WindowView;
-use window_store::WindowStore;
-use workspace::WorkspaceStore;
 
 fn main() {
     env_logger::init();
