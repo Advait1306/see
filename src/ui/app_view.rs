@@ -709,7 +709,9 @@ impl Render for AppView {
                     .min_h_0()
                     .flex()
                     .flex_row()
-                    .child(self.render_sidebar(cx))
+                    .when(!self.sidebar_collapsed, |el| {
+                        el.child(self.render_sidebar(cx))
+                    })
                     .child(
                         div()
                             .id("main-content")
