@@ -1,10 +1,12 @@
+use crate::config;
 use crate::file_watcher::FileWatcher;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
 use gpui_component::theme::ActiveTheme;
 use gpui_component::{Icon, IconName, IndexPath, Selectable, Sizable};
-use std::collections::HashSet;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -160,9 +162,16 @@ pub enum FileTreeEvent {
     OpenFile(PathBuf),
 }
 
+/// Serializable state for file tree persistence
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct FileTreeState {
+    pub expanded_paths_by_workspace: HashMap<String, HashSet<PathBuf>>,
+}
+
 pub struct FileTree {
     root_path: PathBuf,
-    expanded_paths: HashSet<PathBuf>,
+    active_workspace_id: String,
+    expanded_paths_by_workspace: HashMap<String, HashSet<PathBuf>>,
     watcher: Option<FileWatcher>,
     list_state: Option<Entity<ListState<FileTreeDelegate>>>,
     focus_handle: FocusHandle,
@@ -171,20 +180,26 @@ pub struct FileTree {
 impl EventEmitter<FileTreeEvent> for FileTree {}
 
 impl FileTree {
-    pub fn new(root_path: PathBuf, expanded_paths: HashSet<PathBuf>, cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace_id: String, root_path: PathBuf, cx: &mut Context<Self>) -> Self {
         let watcher = FileWatcher::new(root_path.clone()).ok();
 
-        let mut actual_expanded = expanded_paths;
-        // Always expand root
-        actual_expanded.insert(root_path.clone());
-
-        let tree = Self {
-            root_path,
-            expanded_paths: actual_expanded,
+        let mut tree = Self {
+            root_path: root_path.clone(),
+            active_workspace_id: workspace_id.clone(),
+            expanded_paths_by_workspace: HashMap::new(),
             watcher,
             list_state: None,
             focus_handle: cx.focus_handle(),
         };
+
+        // Load persisted state
+        tree.load_state();
+
+        // Always expand root for current workspace
+        tree.expanded_paths_by_workspace
+            .entry(workspace_id)
+            .or_default()
+            .insert(root_path);
 
         // Set up polling for file changes
         cx.spawn(async move |this, cx| {
@@ -214,30 +229,95 @@ impl FileTree {
         tree
     }
 
+    /// Switch to a different workspace
+    pub fn set_workspace(&mut self, workspace_id: String, root_path: PathBuf, cx: &mut Context<Self>) {
+        self.active_workspace_id = workspace_id.clone();
+        self.root_path = root_path.clone();
+
+        // Always expand root for new workspace
+        self.expanded_paths_by_workspace
+            .entry(workspace_id)
+            .or_default()
+            .insert(root_path.clone());
+
+        // Update file watcher
+        self.watcher = FileWatcher::new(root_path).ok();
+
+        // Refresh the list
+        self.refresh_entries(cx);
+        cx.notify();
+    }
+
+    /// Get expanded paths for current workspace
+    pub fn expanded_paths(&self) -> &HashSet<PathBuf> {
+        static EMPTY: std::sync::LazyLock<HashSet<PathBuf>> =
+            std::sync::LazyLock::new(HashSet::new);
+        self.expanded_paths_by_workspace
+            .get(&self.active_workspace_id)
+            .unwrap_or(&EMPTY)
+    }
+
+    /// Toggle expansion for a path in current workspace
+    pub fn toggle_expanded(&mut self, path: &PathBuf, cx: &mut Context<Self>) {
+        let paths = self
+            .expanded_paths_by_workspace
+            .entry(self.active_workspace_id.clone())
+            .or_default();
+
+        if paths.contains(path) {
+            paths.remove(path);
+        } else {
+            paths.insert(path.clone());
+        }
+
+        self.refresh_entries(cx);
+        self.save_state();
+        cx.notify();
+    }
+
+    /// Load persisted state
+    pub fn load_state(&mut self) {
+        let state: FileTreeState = config::load_json(&config::file_tree_state_path());
+        self.expanded_paths_by_workspace = state.expanded_paths_by_workspace;
+    }
+
+    /// Save state to disk
+    pub fn save_state(&self) {
+        let state = FileTreeState {
+            expanded_paths_by_workspace: self.expanded_paths_by_workspace.clone(),
+        };
+        config::save_json(&config::file_tree_state_path(), &state);
+    }
+
+    /// Set expanded paths for current workspace (used during state restoration)
     pub fn set_expanded_paths(&mut self, expanded_paths: HashSet<PathBuf>, cx: &mut Context<Self>) {
-        self.expanded_paths = expanded_paths;
-        self.expanded_paths.insert(self.root_path.clone());
+        let mut paths = expanded_paths;
+        paths.insert(self.root_path.clone());
+        self.expanded_paths_by_workspace
+            .insert(self.active_workspace_id.clone(), paths);
         self.refresh_entries(cx);
         cx.notify();
     }
 
     fn ensure_list_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.list_state.is_none() {
-            let entries = Self::scan_directory_static(&self.root_path, 0, &self.expanded_paths);
+            let expanded_paths = self.expanded_paths().clone();
+            let entries = Self::scan_directory_static(&self.root_path, 0, &expanded_paths);
             let delegate = FileTreeDelegate {
                 entries,
-                expanded_paths: self.expanded_paths.clone(),
+                expanded_paths,
                 selected_index: None,
             };
             let list_state = cx.new(|cx| ListState::new(delegate, window, cx));
 
             // Subscribe to click events (Confirm) to handle directory toggling and file opening
-            cx.subscribe(&list_state, |_this, list_entity, event: &ListEvent, cx| {
+            cx.subscribe(&list_state, |this, list_entity, event: &ListEvent, cx| {
                 if let ListEvent::Confirm(ix) = event {
                     let entry = list_entity.read(cx).delegate().entries.get(ix.row).cloned();
                     if let Some(entry) = entry {
                         if entry.is_dir {
-                            cx.emit(FileTreeEvent::ToggleDirectory(entry.path));
+                            // Handle directory toggle internally
+                            this.toggle_expanded(&entry.path, cx);
                         } else {
                             cx.emit(FileTreeEvent::OpenFile(entry.path));
                         }
@@ -251,8 +331,8 @@ impl FileTree {
     }
 
     fn refresh_entries(&mut self, cx: &mut Context<Self>) {
-        let entries = Self::scan_directory_static(&self.root_path, 0, &self.expanded_paths);
-        let expanded_paths = self.expanded_paths.clone();
+        let expanded_paths = self.expanded_paths().clone();
+        let entries = Self::scan_directory_static(&self.root_path, 0, &expanded_paths);
         if let Some(list_state) = &self.list_state {
             list_state.update(cx, |state, _cx| {
                 state.delegate_mut().entries = entries;

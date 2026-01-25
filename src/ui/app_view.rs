@@ -1,34 +1,40 @@
-use crate::config::{self, AppState, WorkspaceConfig, MemberConfig};
+use crate::config::{self, AppState, MemberConfig, WorkspaceConfig};
 use crate::editor::BufferStore;
 use crate::ui::EditorView;
 use crate::ui::file_tree::{FileTree, FileTreeEvent};
-use crate::ui::pane::{Pane, Axis, TabItem};
+use crate::ui::pane::{Axis, TabItem};
 use crate::ui::pane_group::{Member, PaneAxis, PaneGroup, PaneGroupEvent};
-use crate::workspace::{WorkspaceManager, WorkspaceEvent};
+use crate::workspace::{WorkspaceEvent, WorkspaceStore};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
 use gpui_component::theme::ActiveTheme;
 use gpui_component::{Collapsible, Icon, IconName, Sizable, Side};
-use std::collections::{HashMap, HashSet};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// UI state for AppView persistence
+#[derive(Serialize, Deserialize, Default)]
+pub struct UiState {
+    pub file_tree_visible: bool,
+    pub sidebar_collapsed: bool,
+}
+
 pub struct AppView {
-    workspace_manager: Entity<WorkspaceManager>,
+    workspace_store: Entity<WorkspaceStore>,
     workspace_panes: HashMap<String, Entity<PaneGroup>>,
-    workspace_expanded_paths: HashMap<String, HashSet<PathBuf>>,
     focus_handle: FocusHandle,
     _keystroke_subscription: Option<Subscription>,
     sidebar_collapsed: bool,
     file_tree: Option<Entity<FileTree>>,
     file_tree_visible: bool,
-    buffer_store: Entity<BufferStore>,
 }
 
 impl AppView {
-    pub fn new(workspace_manager: Entity<WorkspaceManager>, cx: &mut Context<Self>) -> Self {
-        // Subscribe to workspace manager events
-        cx.subscribe(&workspace_manager, |this, _manager, event, cx| {
+    pub fn new(workspace_store: Entity<WorkspaceStore>, cx: &mut Context<Self>) -> Self {
+        // Subscribe to workspace store events
+        cx.subscribe(&workspace_store, |this, _store, event, cx| {
             match event {
                 WorkspaceEvent::ActiveWorkspaceChanged => {
                     this.on_active_workspace_changed(cx);
@@ -37,24 +43,20 @@ impl AppView {
         })
         .detach();
 
-        let buffer_store = cx.new(|cx| BufferStore::new(cx));
-
         Self {
-            workspace_manager,
+            workspace_store,
             workspace_panes: HashMap::new(),
-            workspace_expanded_paths: HashMap::new(),
             focus_handle: cx.focus_handle(),
             _keystroke_subscription: None,
             sidebar_collapsed: false,
             file_tree: None,
             file_tree_visible: false,
-            buffer_store,
         }
     }
 
     fn on_active_workspace_changed(&mut self, cx: &mut Context<Self>) {
         self.update_file_tree_path(cx);
-        self.save_state(cx);
+        self.save_all_state(cx);
         cx.notify();
     }
 
@@ -62,9 +64,49 @@ impl AppView {
         self._keystroke_subscription = Some(subscription);
     }
 
+    // =========================================================================
+    // State Persistence
+    // =========================================================================
+
+    /// Load UI state from disk
+    pub fn load_ui_state(&mut self) {
+        let state: UiState = config::load_json(&config::ui_state_path());
+        self.file_tree_visible = state.file_tree_visible;
+        self.sidebar_collapsed = state.sidebar_collapsed;
+    }
+
+    /// Save UI state to disk
+    pub fn save_ui_state(&self) {
+        let state = UiState {
+            file_tree_visible: self.file_tree_visible,
+            sidebar_collapsed: self.sidebar_collapsed,
+        };
+        config::save_json(&config::ui_state_path(), &state);
+    }
+
+    /// Save all state (workspace store, layouts, file tree, UI)
+    fn save_all_state(&self, cx: &App) {
+        // Save workspace store
+        self.workspace_store.read(cx).save();
+
+        // Save layouts for each workspace
+        for (workspace_id, pane_group) in &self.workspace_panes {
+            pane_group.read(cx).save_layout(workspace_id, cx);
+        }
+
+        // Save UI state
+        self.save_ui_state();
+
+        // File tree saves its own state automatically
+    }
+
+    // =========================================================================
+    // Legacy State Restoration (for migration from old config format)
+    // =========================================================================
+
     pub fn collect_state(&self, cx: &App) -> AppState {
-        let manager = self.workspace_manager.read(cx);
-        let workspaces = manager
+        let store = self.workspace_store.read(cx);
+        let workspaces = store
             .workspaces
             .iter()
             .map(|w| {
@@ -78,11 +120,12 @@ impl AppView {
                         open_files: Vec::new(),
                     });
 
-                let expanded_paths = self
-                    .workspace_expanded_paths
-                    .get(&w.id)
-                    .cloned()
-                    .unwrap_or_default();
+                // Get expanded paths from file tree if it exists
+                let expanded_paths = if let Some(ref file_tree) = self.file_tree {
+                    file_tree.read(cx).expanded_paths().clone()
+                } else {
+                    Default::default()
+                };
 
                 WorkspaceConfig {
                     id: w.id.clone(),
@@ -95,7 +138,7 @@ impl AppView {
             .collect();
         AppState {
             workspaces,
-            active_workspace_index: manager.active_workspace_index,
+            active_workspace_index: store.active_workspace_index,
             file_tree_visible: self.file_tree_visible,
         }
     }
@@ -141,20 +184,20 @@ impl AppView {
             return;
         }
 
+        let buffer_store = BufferStore::global(cx);
+
         for workspace_config in &state.workspaces {
-            // Add workspace to manager with the saved ID
-            self.workspace_manager.update(cx, |m, _| {
-                let workspace = crate::workspace::Workspace {
-                    id: workspace_config.id.clone(),
-                    name: workspace_config.name.clone(),
-                    path: workspace_config.path.clone(),
-                };
-                m.workspaces.push(workspace);
+            // Add workspace to store with the saved ID
+            self.workspace_store.update(cx, |store, _| {
+                store.add_workspace_with_id(
+                    workspace_config.id.clone(),
+                    workspace_config.name.clone(),
+                    workspace_config.path.clone(),
+                );
             });
 
             // Create pane group from layout
             let path = workspace_config.path.clone();
-            let buffer_store = self.buffer_store.clone();
             let layout = workspace_config.layout.clone();
             let pane_group = cx.new(|cx| {
                 let member = Self::create_member_from_config(&layout, &path, &buffer_store, cx);
@@ -167,22 +210,20 @@ impl AppView {
             self.subscribe_to_pane_group(&pane_group, cx);
             self.workspace_panes
                 .insert(workspace_config.id.clone(), pane_group);
-            self.workspace_expanded_paths
-                .insert(workspace_config.id.clone(), workspace_config.expanded_paths.clone());
         }
 
         // Set the active workspace
         if let Some(active_index) = state.active_workspace_index {
-            self.workspace_manager.update(cx, |m, _| {
-                if active_index < m.workspaces.len() {
-                    m.active_workspace_index = Some(active_index);
-                } else if !m.workspaces.is_empty() {
-                    m.active_workspace_index = Some(0);
+            self.workspace_store.update(cx, |store, _| {
+                if active_index < store.workspaces.len() {
+                    store.active_workspace_index = Some(active_index);
+                } else if !store.workspaces.is_empty() {
+                    store.active_workspace_index = Some(0);
                 }
             });
         } else if !state.workspaces.is_empty() {
-            self.workspace_manager.update(cx, |m, _| {
-                m.active_workspace_index = Some(0);
+            self.workspace_store.update(cx, |store, _| {
+                store.active_workspace_index = Some(0);
             });
         }
 
@@ -195,23 +236,23 @@ impl AppView {
         cx.notify();
     }
 
+    // =========================================================================
+    // File Tree
+    // =========================================================================
+
     fn create_file_tree(&mut self, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.workspace_manager.read(cx).active_workspace() {
+        if let Some(workspace) = self.workspace_store.read(cx).active_workspace() {
             let workspace_id = workspace.id.clone();
             let path = workspace.path.clone();
-            let expanded_paths = self
-                .workspace_expanded_paths
-                .get(&workspace_id)
-                .cloned()
-                .unwrap_or_default();
 
-            let file_tree = cx.new(|cx| FileTree::new(path, expanded_paths, cx));
+            let file_tree = cx.new(|cx| FileTree::new(workspace_id, path, cx));
 
             // Subscribe to file tree events
-            cx.subscribe(&file_tree, |this, file_tree, event, cx| {
+            cx.subscribe(&file_tree, |this, _file_tree, event, cx| {
                 match event {
-                    FileTreeEvent::ToggleDirectory(path) => {
-                        this.handle_toggle_directory(path.clone(), &file_tree, cx);
+                    FileTreeEvent::ToggleDirectory(_path) => {
+                        // FileTree handles toggle internally now
+                        this.save_state(cx);
                     }
                     FileTreeEvent::OpenFile(path) => {
                         this.open_file_in_active_pane(path.clone(), cx);
@@ -225,8 +266,9 @@ impl AppView {
     }
 
     fn open_file_in_active_pane(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        // Get or create buffer from central store
-        let buffer = self.buffer_store.update(cx, |store, cx| {
+        // Get buffer from global store
+        let buffer_store = BufferStore::global(cx);
+        let buffer = buffer_store.update(cx, |store, cx| {
             store.open_buffer(path.clone(), cx)
         });
 
@@ -251,35 +293,9 @@ impl AppView {
         self.save_state(cx);
     }
 
-    fn handle_toggle_directory(
-        &mut self,
-        path: PathBuf,
-        file_tree: &Entity<FileTree>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(workspace) = self.workspace_manager.read(cx).active_workspace() {
-            let workspace_id = workspace.id.clone();
-            let expanded_paths = self
-                .workspace_expanded_paths
-                .entry(workspace_id)
-                .or_default();
-
-            // Toggle the path
-            if expanded_paths.contains(&path) {
-                expanded_paths.remove(&path);
-            } else {
-                expanded_paths.insert(path);
-            }
-
-            // Update file tree with new expanded paths
-            let new_expanded = expanded_paths.clone();
-            file_tree.update(cx, |tree, cx| {
-                tree.set_expanded_paths(new_expanded, cx);
-            });
-
-            self.save_state(cx);
-        }
-    }
+    // =========================================================================
+    // Pane Group Management
+    // =========================================================================
 
     fn create_member_from_config(
         config: &MemberConfig,
@@ -295,7 +311,7 @@ impl AppView {
             } => {
                 let buffer_store = buffer_store.clone();
                 let pane = cx.new(|cx| {
-                    let mut pane = Pane::new(path.clone(), cx);
+                    let mut pane = crate::ui::pane::Pane::new(path.clone(), cx);
 
                     // Add terminals first
                     let count = if open_files.is_empty() { (*terminal_count).max(1) } else { *terminal_count };
@@ -363,12 +379,17 @@ impl AppView {
         .detach();
     }
 
+    // =========================================================================
+    // Workspace Management
+    // =========================================================================
+
     pub fn add_workspace(&mut self, name: String, path: PathBuf, cx: &mut Context<Self>) {
-        let (workspace_id, new_index) = self.workspace_manager.update(cx, |m, _| {
-            m.add_workspace(name, path.clone());
-            let idx = m.workspaces.len() - 1;
-            (m.workspaces.last().unwrap().id.clone(), idx)
+        let workspace_id = self.workspace_store.update(cx, |store, _| {
+            store.add_workspace(name, path.clone());
+            store.workspaces.last().unwrap().id.clone()
         });
+
+        let new_index = self.workspace_store.read(cx).workspaces.len() - 1;
 
         let pane_group = cx.new(|cx| {
             let group = PaneGroup::new(path.clone(), cx);
@@ -421,14 +442,14 @@ impl AppView {
     }
 
     pub fn next_workspace(&mut self, cx: &mut Context<Self>) {
-        self.workspace_manager.update(cx, |m, cx| {
-            m.next_workspace(cx);
+        self.workspace_store.update(cx, |store, cx| {
+            store.next_workspace(cx);
         });
     }
 
     pub fn prev_workspace(&mut self, cx: &mut Context<Self>) {
-        self.workspace_manager.update(cx, |m, cx| {
-            m.prev_workspace(cx);
+        self.workspace_store.update(cx, |store, cx| {
+            store.prev_workspace(cx);
         });
         self.save_state(cx);
     }
@@ -483,24 +504,28 @@ impl AppView {
     }
 
     pub fn select_workspace(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.workspace_manager.update(cx, |m, cx| {
-            m.set_active(index, cx);
+        self.workspace_store.update(cx, |store, cx| {
+            store.set_active(index, cx);
         });
     }
 
     fn active_workspace_id(&self, cx: &App) -> Option<String> {
-        let manager = self.workspace_manager.read(cx);
-        manager.active_workspace().map(|w| w.id.clone())
+        let store = self.workspace_store.read(cx);
+        store.active_workspace().map(|w| w.id.clone())
     }
 
+    // =========================================================================
+    // UI Rendering
+    // =========================================================================
+
     fn render_sidebar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let manager = self.workspace_manager.read(cx);
-        let workspaces: Vec<(usize, String, bool)> = manager
+        let store = self.workspace_store.read(cx);
+        let workspaces: Vec<(usize, String, bool)> = store
             .workspaces
             .iter()
             .enumerate()
             .map(|(i, w)| {
-                let is_active = manager.active_workspace_index == Some(i);
+                let is_active = store.active_workspace_index == Some(i);
                 (i, w.name.clone(), is_active)
             })
             .collect();
@@ -562,9 +587,18 @@ impl AppView {
 
     fn update_file_tree_path(&mut self, cx: &mut Context<Self>) {
         if self.file_tree_visible {
-            // Recreate file tree for the new workspace (with correct expanded paths and subscription)
-            self.file_tree = None;
-            self.create_file_tree(cx);
+            if let Some(workspace) = self.workspace_store.read(cx).active_workspace() {
+                let workspace_id = workspace.id.clone();
+                let path = workspace.path.clone();
+
+                if let Some(file_tree) = &self.file_tree {
+                    file_tree.update(cx, |ft, cx| {
+                        ft.set_workspace(workspace_id, path, cx);
+                    });
+                } else {
+                    self.create_file_tree(cx);
+                }
+            }
         }
     }
 

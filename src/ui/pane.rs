@@ -5,6 +5,7 @@ use crate::ui::TerminalView;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -35,6 +36,35 @@ pub enum Axis {
     Vertical,
 }
 
+// =============================================================================
+// Tab Trait and Config Types
+// =============================================================================
+
+/// Serializable config for a terminal tab
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TerminalTabConfig {
+    pub cwd: PathBuf,
+}
+
+/// Serializable config for an editor tab
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct EditorTabConfig {
+    pub path: PathBuf,
+    // Future: cursor position, scroll offset, etc.
+}
+
+/// Serializable state for a single tab (tagged union for JSON)
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum TabConfig {
+    Terminal(TerminalTabConfig),
+    Editor(EditorTabConfig),
+}
+
+// =============================================================================
+// TabItem Enum
+// =============================================================================
+
 /// Represents a tab item which can be either a terminal or an editor
 #[derive(Clone)]
 pub enum TabItem {
@@ -57,6 +87,57 @@ impl TabItem {
                 }
             }
         }
+    }
+
+    /// Serialize any tab to its config
+    pub fn to_config(&self, cx: &App) -> TabConfig {
+        match self {
+            TabItem::Terminal(t) => {
+                let cwd = t.read(cx).cwd();
+                TabConfig::Terminal(TerminalTabConfig { cwd })
+            }
+            TabItem::Editor(e) => {
+                let path = e.read(cx).buffer().read(cx).file_path().clone();
+                TabConfig::Editor(EditorTabConfig { path })
+            }
+        }
+    }
+
+    /// Create a tab from its config
+    pub fn from_config(
+        config: &TabConfig,
+        workspace_path: &PathBuf,
+        buffer_store: &Entity<crate::editor::BufferStore>,
+        cx: &mut Context<Pane>,
+    ) -> Option<Self> {
+        match config {
+            TabConfig::Terminal(c) => {
+                let cwd = if c.cwd.exists() {
+                    c.cwd.clone()
+                } else {
+                    workspace_path.clone()
+                };
+                let terminal = Terminal::new(cwd).ok()?;
+                let terminal = Arc::new(parking_lot::Mutex::new(terminal));
+                let terminal_view = cx.new(|cx| TerminalView::new(terminal, cx));
+                Some(TabItem::Terminal(terminal_view))
+            }
+            TabConfig::Editor(c) => {
+                if !c.path.exists() {
+                    return None;
+                }
+                let buffer = buffer_store.update(cx, |store, cx| {
+                    store.open_buffer(c.path.clone(), cx)
+                })?;
+                let editor = cx.new(|cx| EditorView::new(buffer, c.path.clone(), cx));
+                Some(TabItem::Editor(editor))
+            }
+        }
+    }
+
+    /// Get title for tab bar
+    pub fn title(&self, cx: &App) -> String {
+        self.label(cx)
     }
 }
 

@@ -10,6 +10,7 @@ use alacritty_terminal::index::{Column, Line, Point as AlacPoint, Side};
 use alacritty_terminal::selection::SelectionType;
 use gpui::prelude::*;
 use gpui::*;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -105,6 +106,11 @@ impl TerminalView {
 
     pub fn write(&self, input: &str) {
         self.terminal.lock().write(input.as_bytes());
+    }
+
+    /// Get the working directory this terminal was started in
+    pub fn cwd(&self) -> PathBuf {
+        self.terminal.lock().working_directory().clone()
     }
 }
 

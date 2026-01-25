@@ -70,6 +70,7 @@ pub struct Terminal {
     notifier: Notifier,
     event_receiver: std::sync::mpsc::Receiver<Event>,
     size: TerminalSize,
+    working_directory: PathBuf,
 }
 
 impl Terminal {
@@ -114,6 +115,7 @@ impl Terminal {
             notifier,
             event_receiver,
             size,
+            working_directory,
         })
     }
 
@@ -189,5 +191,10 @@ impl Terminal {
     pub fn mode(&self) -> TermMode {
         let term = self.term.lock();
         *term.mode()
+    }
+
+    /// Get the working directory this terminal was started in
+    pub fn working_directory(&self) -> &PathBuf {
+        &self.working_directory
     }
 }

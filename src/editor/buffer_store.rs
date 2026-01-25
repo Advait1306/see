@@ -19,9 +19,23 @@ pub struct BufferStore {
     buffers: HashMap<PathBuf, BufferEntry>,
 }
 
+/// Wrapper to make BufferStore entity global
+pub struct GlobalBufferStore(pub Entity<BufferStore>);
+
+impl Global for GlobalBufferStore {}
+
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl BufferStore {
+    pub fn init(cx: &mut App) {
+        let store = cx.new(|cx| Self::new(cx));
+        cx.set_global(GlobalBufferStore(store));
+    }
+
+    pub fn global(cx: &App) -> Entity<Self> {
+        cx.global::<GlobalBufferStore>().0.clone()
+    }
+
     pub fn new(cx: &mut Context<Self>) -> Self {
         // Set up polling for external changes every 500ms
         cx.spawn(async move |this, cx| {

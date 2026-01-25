@@ -7,6 +7,7 @@ mod types;
 mod ui;
 mod workspace;
 
+use editor::BufferStore;
 use gpui::*;
 use gpui_component::Root;
 use gpui_component_assets::Assets;
@@ -14,7 +15,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 use ui::AppView;
-use workspace::WorkspaceManager;
+use workspace::WorkspaceStore;
 
 fn main() {
     env_logger::init();
@@ -32,10 +33,17 @@ fn main() {
         // Using gpui-component's default dark theme
         // No custom color overrides needed - the theme provides all colors via cx.theme()
 
-        // Load saved state
+        // Initialize global stores
+        BufferStore::init(cx);
+
+        // Load saved state (legacy format for now, will be migrated)
         let saved_state = config::load_state();
 
-        let workspace_manager = cx.new(|_| WorkspaceManager::new());
+        // Create workspace store as an entity (needed for event emission)
+        let workspace_store = cx.new(|_| WorkspaceStore {
+            workspaces: Vec::new(),
+            active_workspace_index: None,
+        });
 
         let app_view_holder: Rc<RefCell<Option<Entity<AppView>>>> = Rc::new(RefCell::new(None));
         let app_view_for_interceptor = app_view_holder.clone();
@@ -57,7 +65,7 @@ fn main() {
             },
             |window, cx| {
                 let app_view = cx.new(|cx| {
-                    let mut app = AppView::new(workspace_manager, cx);
+                    let mut app = AppView::new(workspace_store, cx);
                     app.restore_state(saved_state, cx);
                     app
                 });

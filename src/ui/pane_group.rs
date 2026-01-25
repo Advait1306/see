@@ -1,11 +1,76 @@
-use crate::ui::pane::{Axis, Pane, PaneEvent, SplitDirection};
+use crate::config;
+use crate::editor::BufferStore;
+use crate::ui::pane::{Axis, Pane, PaneEvent, SplitDirection, TabConfig, TabItem};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 const MIN_PANE_SIZE: f32 = 100.0;
 const DIVIDER_SIZE: f32 = 4.0;
+
+// =============================================================================
+// Layout Serialization Types
+// =============================================================================
+
+/// Serializable state for a pane (collection of tabs)
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PaneConfig {
+    pub tabs: Vec<TabConfig>,
+    pub active_index: usize,
+}
+
+/// Serializable layout tree node
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum LayoutNode {
+    Pane(PaneConfig),
+    Split {
+        axis: LayoutAxis,
+        ratios: Vec<f32>,
+        children: Vec<LayoutNode>,
+    },
+}
+
+impl Default for LayoutNode {
+    fn default() -> Self {
+        LayoutNode::Pane(PaneConfig {
+            tabs: Vec::new(),
+            active_index: 0,
+        })
+    }
+}
+
+/// Axis for serialization (separate from internal Axis to avoid coupling)
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum LayoutAxis {
+    Horizontal,
+    Vertical,
+}
+
+impl From<Axis> for LayoutAxis {
+    fn from(axis: Axis) -> Self {
+        match axis {
+            Axis::Horizontal => LayoutAxis::Horizontal,
+            Axis::Vertical => LayoutAxis::Vertical,
+        }
+    }
+}
+
+impl From<LayoutAxis> for Axis {
+    fn from(axis: LayoutAxis) -> Self {
+        match axis {
+            LayoutAxis::Horizontal => Axis::Horizontal,
+            LayoutAxis::Vertical => Axis::Vertical,
+        }
+    }
+}
+
+// =============================================================================
+// Member and PaneAxis
+// =============================================================================
 
 pub enum Member {
     Pane(Entity<Pane>),
@@ -337,6 +402,7 @@ impl Render for DividerDrag {
 pub struct PaneGroup {
     pub root: Member,
     pub active_pane: Option<Entity<Pane>>,
+    workspace_path: PathBuf,
     drag_bounds: Option<Bounds<Pixels>>,
     // Track the start position for the current drag
     drag_start: Option<DragStart>,
@@ -371,12 +437,13 @@ impl PaneGroup {
         Self {
             root: Member::Pane(pane.clone()),
             active_pane: Some(pane),
+            workspace_path: path,
             drag_bounds: None,
             drag_start: None,
         }
     }
 
-    pub fn with_root(_path: PathBuf, root: Member, cx: &mut Context<Self>) -> Self {
+    pub fn with_root(path: PathBuf, root: Member, cx: &mut Context<Self>) -> Self {
         // Subscribe to all panes in the root
         let mut panes = Vec::new();
         root.collect_panes(&mut panes);
@@ -387,8 +454,119 @@ impl PaneGroup {
         Self {
             root,
             active_pane: panes.first().cloned(),
+            workspace_path: path,
             drag_bounds: None,
             drag_start: None,
+        }
+    }
+
+    /// Load layout from disk for a specific workspace
+    pub fn load_layout(workspace_id: &str) -> Option<LayoutNode> {
+        let path = config::layout_path(workspace_id);
+        if path.exists() {
+            Some(config::load_json(&path))
+        } else {
+            None
+        }
+    }
+
+    /// Save current layout to disk
+    pub fn save_layout(&self, workspace_id: &str, cx: &App) {
+        let layout = self.collect_layout(cx);
+        config::save_json(&config::layout_path(workspace_id), &layout);
+    }
+
+    /// Collect layout tree from current pane structure
+    fn collect_layout(&self, cx: &App) -> LayoutNode {
+        self.collect_member_layout(&self.root, cx)
+    }
+
+    fn collect_member_layout(&self, member: &Member, cx: &App) -> LayoutNode {
+        match member {
+            Member::Pane(pane) => {
+                let pane = pane.read(cx);
+                let tabs = pane.tabs.iter()
+                    .map(|tab| tab.to_config(cx))
+                    .collect();
+
+                LayoutNode::Pane(PaneConfig {
+                    tabs,
+                    active_index: pane.active_index,
+                })
+            }
+            Member::Axis(axis) => LayoutNode::Split {
+                axis: axis.axis.into(),
+                ratios: axis.ratios.clone(),
+                children: axis.members.iter()
+                    .map(|m| self.collect_member_layout(m, cx))
+                    .collect(),
+            },
+        }
+    }
+
+    /// Create a PaneGroup from a saved layout
+    pub fn from_layout(
+        layout: LayoutNode,
+        workspace_path: PathBuf,
+        buffer_store: &Entity<BufferStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let member = Self::instantiate_layout(&layout, &workspace_path, buffer_store, cx);
+        let mut panes = Vec::new();
+        member.collect_panes(&mut panes);
+        for pane in &panes {
+            Self::subscribe_to_pane(pane, cx);
+        }
+
+        Self {
+            root: member,
+            active_pane: panes.first().cloned(),
+            workspace_path,
+            drag_bounds: None,
+            drag_start: None,
+        }
+    }
+
+    fn instantiate_layout(
+        node: &LayoutNode,
+        workspace_path: &PathBuf,
+        buffer_store: &Entity<BufferStore>,
+        cx: &mut Context<Self>,
+    ) -> Member {
+        match node {
+            LayoutNode::Pane(config) => {
+                let pane = cx.new(|cx| {
+                    let mut pane = Pane::new(workspace_path.clone(), cx);
+
+                    // Each tab deserializes itself
+                    for tab_config in &config.tabs {
+                        if let Some(tab) = TabItem::from_config(tab_config, workspace_path, buffer_store, cx) {
+                            pane.tabs.push(tab);
+                        }
+                    }
+
+                    // Ensure at least one tab exists
+                    if pane.tabs.is_empty() {
+                        pane.add_terminal(cx);
+                    }
+
+                    pane.active_index = config.active_index.min(
+                        pane.tabs.len().saturating_sub(1)
+                    );
+                    pane
+                });
+                Member::Pane(pane)
+            }
+            LayoutNode::Split { axis, ratios, children } => {
+                let members = children.iter()
+                    .map(|c| Self::instantiate_layout(c, workspace_path, buffer_store, cx))
+                    .collect();
+                Member::Axis(PaneAxis {
+                    axis: (*axis).into(),
+                    members,
+                    ratios: ratios.clone(),
+                })
+            }
         }
     }
 
