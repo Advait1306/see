@@ -8,7 +8,8 @@ pub struct WorkspaceSidebar {
     workspace_store: Entity<WorkspaceStore>,
     window_store: Entity<WindowStore>,
     focus_handle: FocusHandle,
-    _subscriptions: Vec<Subscription>,
+    _workspace_store_subscription: Subscription,
+    _window_store_subscription: Subscription,
 }
 
 impl WorkspaceSidebar {
@@ -47,7 +48,8 @@ impl WorkspaceSidebar {
             workspace_store,
             window_store,
             focus_handle: cx.focus_handle(),
-            _subscriptions: vec![workspace_store_sub, window_store_sub],
+            _workspace_store_subscription: workspace_store_sub,
+            _window_store_subscription: window_store_sub,
         }
     }
 
