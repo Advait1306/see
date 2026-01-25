@@ -158,7 +158,6 @@ impl ListDelegate for FileTreeDelegate {
 
 // Events emitted by the file tree
 pub enum FileTreeEvent {
-    ToggleDirectory(PathBuf),
     OpenFile(PathBuf),
 }
 
@@ -287,16 +286,6 @@ impl FileTree {
             expanded_paths_by_workspace: self.expanded_paths_by_workspace.clone(),
         };
         config::save_json(&config::file_tree_state_path(), &state);
-    }
-
-    /// Set expanded paths for current workspace (used during state restoration)
-    pub fn set_expanded_paths(&mut self, expanded_paths: HashSet<PathBuf>, cx: &mut Context<Self>) {
-        let mut paths = expanded_paths;
-        paths.insert(self.root_path.clone());
-        self.expanded_paths_by_workspace
-            .insert(self.active_workspace_id.clone(), paths);
-        self.refresh_entries(cx);
-        cx.notify();
     }
 
     fn ensure_list_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {

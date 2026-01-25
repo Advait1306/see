@@ -62,8 +62,6 @@ pub struct WorkspaceStore {
     pub active_workspace_index: Option<usize>,
 }
 
-impl Global for WorkspaceStore {}
-
 pub enum WorkspaceEvent {
     ActiveWorkspaceChanged,
 }
@@ -71,29 +69,6 @@ pub enum WorkspaceEvent {
 impl EventEmitter<WorkspaceEvent> for WorkspaceStore {}
 
 impl WorkspaceStore {
-    pub fn init(cx: &mut App) {
-        let store = Self {
-            workspaces: Vec::new(),
-            active_workspace_index: None,
-        };
-        cx.set_global(store);
-    }
-
-    pub fn global(cx: &App) -> &Self {
-        cx.global::<Self>()
-    }
-
-    pub fn global_mut(cx: &mut App) -> &mut Self {
-        cx.global_mut::<Self>()
-    }
-
-    /// Load workspaces from persistent storage
-    pub fn load(&mut self) {
-        let config: WorkspacesConfig = config::load_json(&config::workspaces_path());
-        self.workspaces = config.workspaces.into_iter().map(Workspace::from).collect();
-        self.active_workspace_index = config.active_index;
-    }
-
     /// Save workspaces to persistent storage
     pub fn save(&self) {
         let config = WorkspacesConfig {

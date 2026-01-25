@@ -103,42 +103,6 @@ impl TabItem {
         }
     }
 
-    /// Create a tab from its config
-    pub fn from_config(
-        config: &TabConfig,
-        workspace_path: &PathBuf,
-        buffer_store: &Entity<crate::editor::BufferStore>,
-        cx: &mut Context<Pane>,
-    ) -> Option<Self> {
-        match config {
-            TabConfig::Terminal(c) => {
-                let cwd = if c.cwd.exists() {
-                    c.cwd.clone()
-                } else {
-                    workspace_path.clone()
-                };
-                let terminal = Terminal::new(cwd).ok()?;
-                let terminal = Arc::new(parking_lot::Mutex::new(terminal));
-                let terminal_view = cx.new(|cx| TerminalView::new(terminal, cx));
-                Some(TabItem::Terminal(terminal_view))
-            }
-            TabConfig::Editor(c) => {
-                if !c.path.exists() {
-                    return None;
-                }
-                let buffer = buffer_store.update(cx, |store, cx| {
-                    store.open_buffer(c.path.clone(), cx)
-                })?;
-                let editor = cx.new(|cx| EditorView::new(buffer, c.path.clone(), cx));
-                Some(TabItem::Editor(editor))
-            }
-        }
-    }
-
-    /// Get title for tab bar
-    pub fn title(&self, cx: &App) -> String {
-        self.label(cx)
-    }
 }
 
 #[derive(Clone)]
@@ -226,14 +190,6 @@ impl Pane {
 
     pub fn active_tab(&self) -> Option<&TabItem> {
         self.tabs.get(self.active_index)
-    }
-
-    /// For backwards compatibility - returns the active terminal if the active tab is a terminal
-    pub fn active_terminal(&self) -> Option<&Entity<TerminalView>> {
-        match self.active_tab() {
-            Some(TabItem::Terminal(terminal)) => Some(terminal),
-            _ => None,
-        }
     }
 
     /// Returns the count of terminal tabs (for state serialization)

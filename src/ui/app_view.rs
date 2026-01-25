@@ -63,13 +63,6 @@ impl AppView {
     // State Persistence
     // =========================================================================
 
-    /// Load UI state from disk
-    pub fn load_ui_state(&mut self) {
-        let state: UiState = config::load_json(&config::ui_state_path());
-        self.file_tree_visible = state.file_tree_visible;
-        self.sidebar_collapsed = state.sidebar_collapsed;
-    }
-
     /// Save UI state to disk
     pub fn save_ui_state(&self) {
         let state = UiState {
@@ -245,10 +238,6 @@ impl AppView {
             // Subscribe to file tree events
             cx.subscribe(&file_tree, |this, _file_tree, event, cx| {
                 match event {
-                    FileTreeEvent::ToggleDirectory(_path) => {
-                        // FileTree handles toggle internally now
-                        this.save_state(cx);
-                    }
                     FileTreeEvent::OpenFile(path) => {
                         this.open_file_in_active_pane(path.clone(), cx);
                     }
@@ -403,19 +392,6 @@ impl AppView {
         // Switch to the new workspace
         self.select_workspace(new_index, cx);
         self.save_state(cx);
-    }
-
-    pub fn send_to_terminal(&self, input: &str, cx: &mut Context<Self>) {
-        if let Some(workspace_id) = self.active_workspace_id(cx) {
-            if let Some(pane_group) = self.workspace_panes.get(&workspace_id) {
-                pane_group.read(cx).active_pane.as_ref().map(|pane| {
-                    pane.read(cx).active_terminal().map(|terminal_view| {
-                        terminal_view.read(cx).write(input);
-                    });
-                });
-                cx.notify();
-            }
-        }
     }
 
     pub fn next_pane(&mut self, cx: &mut Context<Self>) {

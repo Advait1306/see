@@ -1,6 +1,5 @@
 use crate::config;
-use crate::editor::BufferStore;
-use crate::ui::pane::{Axis, Pane, PaneEvent, SplitDirection, TabConfig, TabItem};
+use crate::ui::pane::{Axis, Pane, PaneEvent, SplitDirection, TabConfig};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;
@@ -402,7 +401,6 @@ impl Render for DividerDrag {
 pub struct PaneGroup {
     pub root: Member,
     pub active_pane: Option<Entity<Pane>>,
-    workspace_path: PathBuf,
     drag_bounds: Option<Bounds<Pixels>>,
     // Track the start position for the current drag
     drag_start: Option<DragStart>,
@@ -437,13 +435,12 @@ impl PaneGroup {
         Self {
             root: Member::Pane(pane.clone()),
             active_pane: Some(pane),
-            workspace_path: path,
             drag_bounds: None,
             drag_start: None,
         }
     }
 
-    pub fn with_root(path: PathBuf, root: Member, cx: &mut Context<Self>) -> Self {
+    pub fn with_root(_path: PathBuf, root: Member, cx: &mut Context<Self>) -> Self {
         // Subscribe to all panes in the root
         let mut panes = Vec::new();
         root.collect_panes(&mut panes);
@@ -454,19 +451,8 @@ impl PaneGroup {
         Self {
             root,
             active_pane: panes.first().cloned(),
-            workspace_path: path,
             drag_bounds: None,
             drag_start: None,
-        }
-    }
-
-    /// Load layout from disk for a specific workspace
-    pub fn load_layout(workspace_id: &str) -> Option<LayoutNode> {
-        let path = config::layout_path(workspace_id);
-        if path.exists() {
-            Some(config::load_json(&path))
-        } else {
-            None
         }
     }
 
@@ -501,72 +487,6 @@ impl PaneGroup {
                     .map(|m| self.collect_member_layout(m, cx))
                     .collect(),
             },
-        }
-    }
-
-    /// Create a PaneGroup from a saved layout
-    pub fn from_layout(
-        layout: LayoutNode,
-        workspace_path: PathBuf,
-        buffer_store: &Entity<BufferStore>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let member = Self::instantiate_layout(&layout, &workspace_path, buffer_store, cx);
-        let mut panes = Vec::new();
-        member.collect_panes(&mut panes);
-        for pane in &panes {
-            Self::subscribe_to_pane(pane, cx);
-        }
-
-        Self {
-            root: member,
-            active_pane: panes.first().cloned(),
-            workspace_path,
-            drag_bounds: None,
-            drag_start: None,
-        }
-    }
-
-    fn instantiate_layout(
-        node: &LayoutNode,
-        workspace_path: &PathBuf,
-        buffer_store: &Entity<BufferStore>,
-        cx: &mut Context<Self>,
-    ) -> Member {
-        match node {
-            LayoutNode::Pane(config) => {
-                let pane = cx.new(|cx| {
-                    let mut pane = Pane::new(workspace_path.clone(), cx);
-
-                    // Each tab deserializes itself
-                    for tab_config in &config.tabs {
-                        if let Some(tab) = TabItem::from_config(tab_config, workspace_path, buffer_store, cx) {
-                            pane.tabs.push(tab);
-                        }
-                    }
-
-                    // Ensure at least one tab exists
-                    if pane.tabs.is_empty() {
-                        pane.add_terminal(cx);
-                    }
-
-                    pane.active_index = config.active_index.min(
-                        pane.tabs.len().saturating_sub(1)
-                    );
-                    pane
-                });
-                Member::Pane(pane)
-            }
-            LayoutNode::Split { axis, ratios, children } => {
-                let members = children.iter()
-                    .map(|c| Self::instantiate_layout(c, workspace_path, buffer_store, cx))
-                    .collect();
-                Member::Axis(PaneAxis {
-                    axis: (*axis).into(),
-                    members,
-                    ratios: ratios.clone(),
-                })
-            }
         }
     }
 
