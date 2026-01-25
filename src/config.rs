@@ -45,6 +45,16 @@ pub fn layout_path(workspace_id: &str) -> PathBuf {
     layouts_dir().join(format!("{}.json", workspace_id))
 }
 
+/// Path to workspaces directory (for per-workspace config files)
+pub fn workspaces_dir() -> PathBuf {
+    config_dir().join("workspaces")
+}
+
+/// Path to a specific workspace's file tree state
+pub fn workspace_file_tree_path(workspace_id: &str) -> PathBuf {
+    workspaces_dir().join(workspace_id).join("file-tree.json")
+}
+
 /// Generic JSON load helper
 pub fn load_json<T: DeserializeOwned + Default>(path: &Path) -> T {
     if !path.exists() {
@@ -139,6 +149,23 @@ pub fn config_path() -> PathBuf {
     config_dir().join("state.json")
 }
 
+/// Check if legacy state.json exists
+pub fn legacy_state_exists() -> bool {
+    config_path().exists()
+}
+
+/// Delete legacy state.json after successful migration
+pub fn delete_legacy_state() {
+    let path = config_path();
+    if path.exists() {
+        if let Err(e) = fs::remove_file(&path) {
+            log::error!("Failed to delete legacy state.json: {}", e);
+        } else {
+            log::info!("Successfully deleted legacy state.json after migration");
+        }
+    }
+}
+
 /// Load legacy state (for migration)
 pub fn load_state() -> AppState {
     let path = config_path();
@@ -152,23 +179,3 @@ pub fn load_state() -> AppState {
     }
 }
 
-/// Save legacy state (for backwards compatibility during migration)
-pub fn save_state(state: &AppState) {
-    let dir = config_dir();
-    if let Err(e) = fs::create_dir_all(&dir) {
-        log::error!("Failed to create config directory: {}", e);
-        return;
-    }
-
-    let path = config_path();
-    match serde_json::to_string_pretty(state) {
-        Ok(json) => {
-            if let Err(e) = fs::write(&path, json) {
-                log::error!("Failed to save state: {}", e);
-            }
-        }
-        Err(e) => {
-            log::error!("Failed to serialize state: {}", e);
-        }
-    }
-}

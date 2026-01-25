@@ -5,7 +5,7 @@ use super::input::key_to_input;
 use crate::commands::{SendShiftTabToTerminal, SendTabToTerminal};
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, PADDING};
 use crate::terminal::Terminal;
-use crate::types::SelectionPhase;
+use crate::types::{SelectionPhase, Tab, TabConfig, TerminalTabConfig};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as AlacPoint, Side};
 use alacritty_terminal::selection::SelectionType;
@@ -262,5 +262,15 @@ impl Render for TerminalView {
 impl Focusable for TerminalView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl Tab for TerminalView {
+    fn label(&self, _cx: &App) -> String {
+        "Terminal".to_string()
+    }
+
+    fn to_config(&self, _cx: &App) -> TabConfig {
+        TabConfig::Terminal(TerminalTabConfig { cwd: self.cwd() })
     }
 }

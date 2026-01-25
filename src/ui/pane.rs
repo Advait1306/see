@@ -1,13 +1,12 @@
 use crate::editor::Buffer;
-use crate::terminal::Terminal;
+use crate::terminal_store::TerminalStore;
+use crate::types::{Tab, TabConfig};
 use crate::ui::EditorView;
 use crate::ui::TerminalView;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitDirection {
@@ -37,31 +36,6 @@ pub enum Axis {
 }
 
 // =============================================================================
-// Tab Trait and Config Types
-// =============================================================================
-
-/// Serializable config for a terminal tab
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct TerminalTabConfig {
-    pub cwd: PathBuf,
-}
-
-/// Serializable config for an editor tab
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct EditorTabConfig {
-    pub path: PathBuf,
-    // Future: cursor position, scroll offset, etc.
-}
-
-/// Serializable state for a single tab (tagged union for JSON)
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum TabConfig {
-    Terminal(TerminalTabConfig),
-    Editor(EditorTabConfig),
-}
-
-// =============================================================================
 // TabItem Enum
 // =============================================================================
 
@@ -75,34 +49,17 @@ pub enum TabItem {
 impl TabItem {
     pub fn label(&self, cx: &App) -> String {
         match self {
-            TabItem::Terminal(_) => "Terminal".to_string(),
-            TabItem::Editor(editor) => {
-                let editor_view = editor.read(cx);
-                let buffer = editor_view.buffer().read(cx);
-                let name = buffer.file_name();
-                if buffer.is_dirty() {
-                    format!("{}*", name)
-                } else {
-                    name
-                }
-            }
+            TabItem::Terminal(t) => t.read(cx).label(cx),
+            TabItem::Editor(e) => e.read(cx).label(cx),
         }
     }
 
-    /// Serialize any tab to its config
     pub fn to_config(&self, cx: &App) -> TabConfig {
         match self {
-            TabItem::Terminal(t) => {
-                let cwd = t.read(cx).cwd();
-                TabConfig::Terminal(TerminalTabConfig { cwd })
-            }
-            TabItem::Editor(e) => {
-                let path = e.read(cx).buffer().read(cx).file_path().clone();
-                TabConfig::Editor(EditorTabConfig { path })
-            }
+            TabItem::Terminal(t) => t.read(cx).to_config(cx),
+            TabItem::Editor(e) => e.read(cx).to_config(cx),
         }
     }
-
 }
 
 #[derive(Clone)]
@@ -149,8 +106,12 @@ impl Pane {
     }
 
     pub fn add_terminal(&mut self, cx: &mut Context<Self>) {
-        if let Ok(terminal) = Terminal::new(self.path.clone()) {
-            let terminal = Arc::new(parking_lot::Mutex::new(terminal));
+        let terminal_store = TerminalStore::global(cx);
+        let result = terminal_store.update(cx, |store, cx| {
+            store.create_terminal(self.path.clone(), cx)
+        });
+
+        if let Some((_id, terminal)) = result {
             let terminal_view = cx.new(|cx| TerminalView::new(terminal, cx));
             self.tabs.push(TabItem::Terminal(terminal_view));
             self.terminal_counter += 1;
@@ -159,6 +120,7 @@ impl Pane {
         }
     }
 
+    #[allow(dead_code)]
     pub fn add_editor(&mut self, buffer: Entity<Buffer>, file_path: PathBuf, cx: &mut Context<Self>) {
         let editor_view = cx.new(|cx| EditorView::new(buffer, file_path, cx));
         self.tabs.push(TabItem::Editor(editor_view));
@@ -192,7 +154,7 @@ impl Pane {
         self.tabs.get(self.active_index)
     }
 
-    /// Returns the count of terminal tabs (for state serialization)
+    #[allow(dead_code)]
     pub fn terminal_count(&self) -> usize {
         self.tabs
             .iter()
@@ -200,7 +162,7 @@ impl Pane {
             .count()
     }
 
-    /// Returns the file paths of open editor tabs (for state serialization)
+    #[allow(dead_code)]
     pub fn open_file_paths(&self, cx: &App) -> Vec<PathBuf> {
         self.tabs
             .iter()

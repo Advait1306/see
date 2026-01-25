@@ -2,19 +2,24 @@ mod commands;
 mod config;
 mod constants;
 mod editor;
+mod file_tree_store;
 mod file_watcher;
 mod terminal;
+mod terminal_store;
 mod types;
 mod ui;
+mod window_store;
 mod workspace;
 
 use commands::Quit;
-use editor::BufferStore;
+use editor::EditorStore;
 use gpui::*;
 use gpui_component::Root;
 use gpui_component_assets::Assets;
 use std::borrow::Cow;
-use ui::AppView;
+use terminal_store::TerminalStore;
+use ui::WindowView;
+use window_store::WindowStore;
 use workspace::WorkspaceStore;
 
 fn main() {
@@ -38,20 +43,16 @@ fn main() {
             .add_fonts(vec![Cow::Borrowed(font_data.as_slice())])
             .expect("Failed to load Paper Mono font");
 
-        // Using gpui-component's default dark theme
-        // No custom color overrides needed - the theme provides all colors via cx.theme()
+        // Initialize global stores (each store handles its own migration from legacy state.json)
+        // FileTreeStore and PaneStore are now created per-workspace inside WorkspaceStore
+        EditorStore::init(cx);
+        TerminalStore::init(cx);
+        let workspace_store = WorkspaceStore::init(cx);
 
-        // Initialize global stores
-        BufferStore::init(cx);
-
-        // Load saved state (legacy format for now, will be migrated)
-        let saved_state = config::load_state();
-
-        // Create workspace store as an entity (needed for event emission)
-        let workspace_store = cx.new(|_| WorkspaceStore {
-            workspaces: Vec::new(),
-            active_workspace_index: None,
-        });
+        // Delete legacy state.json after all stores have migrated
+        if config::legacy_state_exists() {
+            config::delete_legacy_state();
+        }
 
         cx.open_window(
             WindowOptions {
@@ -69,12 +70,25 @@ fn main() {
                 ..Default::default()
             },
             |window, cx| {
-                let app_view = cx.new(|cx| {
-                    let mut app = AppView::new(workspace_store, cx);
-                    app.restore_state(saved_state, cx);
-                    app
+                // Create WindowStore for this window
+                let window_store = cx.new(|cx| WindowStore::new(workspace_store.clone(), cx));
+
+                let window_view = cx.new(|cx| {
+                    let window_view =
+                        WindowView::new(workspace_store.clone(), window_store.clone(), cx);
+
+                    // Ensure at least one workspace exists
+                    if window_view.workspace_store().read(cx).is_empty() {
+                        let home =
+                            dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
+                        window_view.workspace_store().update(cx, |store, cx| {
+                            store.add_workspace("Home".to_string(), home, cx);
+                        });
+                    }
+
+                    window_view
                 });
-                cx.new(|cx| Root::new(app_view, window, cx))
+                cx.new(|cx| Root::new(window_view, window, cx))
             },
         )
         .unwrap();

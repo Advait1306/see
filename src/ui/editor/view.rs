@@ -5,7 +5,7 @@ use super::input::handle_key;
 use super::selection::Selection;
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, PADDING};
 use crate::editor::{Buffer, BufferEvent, EditorState};
-use crate::types::SelectionPhase;
+use crate::types::{EditorTabConfig, SelectionPhase, Tab, TabConfig};
 use gpui::prelude::*;
 use gpui::*;
 use std::path::PathBuf;
@@ -408,5 +408,22 @@ impl Render for EditorView {
 impl Focusable for EditorView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl Tab for EditorView {
+    fn label(&self, cx: &App) -> String {
+        let buffer = self.buffer.read(cx);
+        let name = buffer.file_name();
+        if buffer.is_dirty() {
+            format!("{}*", name)
+        } else {
+            name
+        }
+    }
+
+    fn to_config(&self, cx: &App) -> TabConfig {
+        let path = self.buffer.read(cx).file_path().clone();
+        TabConfig::Editor(EditorTabConfig { path })
     }
 }

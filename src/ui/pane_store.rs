@@ -1,10 +1,10 @@
 use crate::config;
-use crate::ui::pane::{Axis, Pane, PaneEvent, SplitDirection, TabConfig};
+use crate::types::TabConfig;
+use crate::ui::pane::{Axis, Pane, PaneEvent, SplitDirection};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 const MIN_PANE_SIZE: f32 = 100.0;
 const DIVIDER_SIZE: f32 = 4.0;
@@ -79,8 +79,8 @@ pub enum Member {
 impl Member {
     fn render(
         &self,
-        cx: &mut Context<PaneGroup>,
-        group_entity: Entity<PaneGroup>,
+        cx: &mut Context<PaneStore>,
+        group_entity: Entity<PaneStore>,
         path: Vec<usize>,
         container_bounds: Bounds<Pixels>,
     ) -> impl IntoElement {
@@ -133,8 +133,8 @@ impl PaneAxis {
 
     fn render_with_path(
         &self,
-        cx: &mut Context<PaneGroup>,
-        group_entity: Entity<PaneGroup>,
+        cx: &mut Context<PaneStore>,
+        group_entity: Entity<PaneStore>,
         path: Vec<usize>,
         container_bounds: Bounds<Pixels>,
     ) -> impl IntoElement {
@@ -226,10 +226,10 @@ impl PaneAxis {
         &self,
         divider_index: usize,
         axis: Axis,
-        _group_entity: Entity<PaneGroup>,
+        _group_entity: Entity<PaneStore>,
         axis_path: Vec<usize>,
         container_size: f32,
-        cx: &mut Context<PaneGroup>,
+        cx: &mut Context<PaneStore>,
     ) -> impl IntoElement {
         let is_horizontal = axis == Axis::Horizontal;
         let theme = cx.theme();
@@ -398,50 +398,34 @@ impl Render for DividerDrag {
     }
 }
 
-pub struct PaneGroup {
+pub struct PaneStore {
+    workspace_id: String,
     pub root: Member,
     pub active_pane: Option<Entity<Pane>>,
     drag_bounds: Option<Bounds<Pixels>>,
-    // Track the start position for the current drag
     drag_start: Option<DragStart>,
 }
 
 #[derive(Clone)]
 struct DragStart {
-    // Identity of the drag (to detect when a new drag begins)
     axis_path: Vec<usize>,
     divider_index: usize,
-    // Position when drag started
     start_position: Point<Pixels>,
-    // Ratios when drag started
     initial_ratios: Vec<f32>,
 }
 
-pub enum PaneGroupEvent {
-    PaneAdded(()),
-    PaneRemoved(()),
-    PaneFocused(()),
+#[derive(Clone)]
+pub enum PaneStoreEvent {
+    PaneAdded,
+    PaneRemoved,
+    PaneFocused,
     StateChanged,
 }
 
-impl EventEmitter<PaneGroupEvent> for PaneGroup {}
+impl EventEmitter<PaneStoreEvent> for PaneStore {}
 
-impl PaneGroup {
-    pub fn new(path: PathBuf, cx: &mut Context<Self>) -> Self {
-        let pane = cx.new(|cx| Pane::new(path.clone(), cx));
-        log::info!("PaneGroup::new - created pane {:?}", pane.entity_id());
-        Self::subscribe_to_pane(&pane, cx);
-
-        Self {
-            root: Member::Pane(pane.clone()),
-            active_pane: Some(pane),
-            drag_bounds: None,
-            drag_start: None,
-        }
-    }
-
-    pub fn with_root(_path: PathBuf, root: Member, cx: &mut Context<Self>) -> Self {
-        // Subscribe to all panes in the root
+impl PaneStore {
+    pub fn with_root(workspace_id: String, root: Member, cx: &mut Context<Self>) -> Self {
         let mut panes = Vec::new();
         root.collect_panes(&mut panes);
         for pane in &panes {
@@ -449,6 +433,7 @@ impl PaneGroup {
         }
 
         Self {
+            workspace_id,
             root,
             active_pane: panes.first().cloned(),
             drag_bounds: None,
@@ -456,10 +441,9 @@ impl PaneGroup {
         }
     }
 
-    /// Save current layout to disk
-    pub fn save_layout(&self, workspace_id: &str, cx: &App) {
+    pub fn save_layout(&self, cx: &App) {
         let layout = self.collect_layout(cx);
-        config::save_json(&config::layout_path(workspace_id), &layout);
+        config::save_json(&config::layout_path(&self.workspace_id), &layout);
     }
 
     /// Collect layout tree from current pane structure
@@ -500,16 +484,15 @@ impl PaneGroup {
                     this.split_pane(&pane, new_pane.clone(), *direction, cx);
                 }
                 PaneEvent::TabMoved | PaneEvent::TerminalAdded | PaneEvent::TabClosed => {
-                    // Check if pane is empty and should be removed
                     let is_empty = pane.read(cx).tabs.is_empty();
                     if is_empty {
                         this.remove_pane(&pane, cx);
                     }
-                    cx.emit(PaneGroupEvent::StateChanged);
+                    cx.emit(PaneStoreEvent::StateChanged);
                 }
                 PaneEvent::Focus => {
                     this.active_pane = Some(pane.clone());
-                    cx.emit(PaneGroupEvent::PaneFocused(()));
+                    cx.emit(PaneStoreEvent::PaneFocused);
                 }
             }
         })
@@ -554,21 +537,19 @@ impl PaneGroup {
         }
 
         self.active_pane = Some(new_pane.clone());
-        cx.emit(PaneGroupEvent::PaneAdded(()));
-        cx.emit(PaneGroupEvent::StateChanged);
+        cx.emit(PaneStoreEvent::PaneAdded);
+        cx.emit(PaneStoreEvent::StateChanged);
         cx.notify();
     }
 
     pub fn remove_pane(&mut self, target: &Entity<Pane>, cx: &mut Context<Self>) {
         match &mut self.root {
             Member::Pane(pane) if pane == target => {
-                // Can't remove last pane, but emit event
-                cx.emit(PaneGroupEvent::PaneRemoved(()));
+                cx.emit(PaneStoreEvent::PaneRemoved);
                 return;
             }
             Member::Axis(axis) => {
                 if axis.remove_pane(target) {
-                    // Collapse if only one member remains
                     if axis.members.len() == 1 {
                         self.root = axis.members.remove(0);
                     }
@@ -577,13 +558,12 @@ impl PaneGroup {
             _ => {}
         }
 
-        // Update active pane if it was removed
         if self.active_pane.as_ref() == Some(target) {
             self.active_pane = self.root.first_pane();
         }
 
-        cx.emit(PaneGroupEvent::PaneRemoved(()));
-        cx.emit(PaneGroupEvent::StateChanged);
+        cx.emit(PaneStoreEvent::PaneRemoved);
+        cx.emit(PaneStoreEvent::StateChanged);
         cx.notify();
     }
 
@@ -705,7 +685,6 @@ impl PaneGroup {
                 *ratio /= total;
             }
 
-            // Apply to the correct axis using the path
             if let Some(axis) = self.get_axis_at_path_mut(&drag_data.axis_path) {
                 log::info!(
                     "APPLYING DRAG: path={:?}, axis={:?}, new_ratios={:?}",
@@ -714,18 +693,63 @@ impl PaneGroup {
                     new_ratios
                 );
                 axis.ratios = new_ratios;
-                cx.emit(PaneGroupEvent::StateChanged);
+                cx.emit(PaneStoreEvent::StateChanged);
                 cx.notify();
+            }
+        }
+    }
+
+    pub fn next_pane(&mut self, cx: &mut Context<Self>) {
+        if let Some(pane) = &self.active_pane {
+            pane.update(cx, |p, cx| {
+                if p.tabs.len() > 1 {
+                    p.active_index = (p.active_index + 1) % p.tabs.len();
+                    cx.notify();
+                }
+            });
+        }
+    }
+
+    pub fn prev_pane(&mut self, cx: &mut Context<Self>) {
+        if let Some(pane) = &self.active_pane {
+            pane.update(cx, |p, cx| {
+                if p.tabs.len() > 1 {
+                    p.active_index = if p.active_index == 0 {
+                        p.tabs.len() - 1
+                    } else {
+                        p.active_index - 1
+                    };
+                    cx.notify();
+                }
+            });
+        }
+    }
+
+    pub fn close_current_pane(&mut self, cx: &mut Context<Self>) {
+        if let Some(pane) = self.active_pane.clone() {
+            let (should_close, pane_count) = {
+                let tabs_count = pane.read(cx).tabs.len();
+                if tabs_count > 1 {
+                    pane.update(cx, |p, cx| {
+                        p.remove_tab(p.active_index, cx);
+                    });
+                    (false, self.pane_count())
+                } else {
+                    (true, self.pane_count())
+                }
+            };
+
+            if should_close && pane_count > 1 {
+                self.remove_pane(&pane, cx);
             }
         }
     }
 }
 
-impl Render for PaneGroup {
+impl Render for PaneStore {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let group_entity = cx.entity().clone();
 
-        // Debug: log the pane structure
         let root_type = match &self.root {
             Member::Pane(_) => "Pane (single, no dividers)",
             Member::Axis(a) => {
@@ -736,30 +760,28 @@ impl Render for PaneGroup {
                 }
             }
         };
-        log::info!("PaneGroup::render - root type: {}", root_type);
+        log::info!("PaneStore::render - root type: {}", root_type);
         self.log_structure(cx);
 
-        // Use stored bounds or window bounds as initial container
         let container_bounds = self.drag_bounds.unwrap_or_else(|| window.bounds());
         log::info!(
-            "PaneGroup::render - container_bounds: {:?}",
+            "PaneStore::render - container_bounds: {:?}",
             container_bounds
         );
 
         div()
-            .id("pane-group")
+            .id("pane-store")
             .size_full()
             .on_mouse_move(cx.listener(|this, _event: &MouseMoveEvent, window, _cx| {
-                // Store the current bounds for accurate drag calculations
                 this.drag_bounds = Some(window.bounds());
             }))
             .child(self.root.render(cx, group_entity, vec![], container_bounds))
     }
 }
 
-impl PaneGroup {
+impl PaneStore {
     fn log_structure(&self, cx: &App) {
-        log::info!("=== PaneGroup Structure ===");
+        log::info!("=== PaneStore Structure ===");
         self.log_member(&self.root, 0, cx);
         log::info!("===========================");
     }

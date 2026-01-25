@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
-pub enum BufferStoreEvent {
+pub enum EditorStoreEvent {
     BufferOpened,
 }
 
@@ -15,29 +15,27 @@ struct BufferEntry {
     ref_count: usize,
 }
 
-pub struct BufferStore {
+pub struct EditorStore {
     buffers: HashMap<PathBuf, BufferEntry>,
 }
 
-/// Wrapper to make BufferStore entity global
-pub struct GlobalBufferStore(pub Entity<BufferStore>);
+pub struct GlobalEditorStore(pub Entity<EditorStore>);
 
-impl Global for GlobalBufferStore {}
+impl Global for GlobalEditorStore {}
 
-impl EventEmitter<BufferStoreEvent> for BufferStore {}
+impl EventEmitter<EditorStoreEvent> for EditorStore {}
 
-impl BufferStore {
+impl EditorStore {
     pub fn init(cx: &mut App) {
         let store = cx.new(|cx| Self::new(cx));
-        cx.set_global(GlobalBufferStore(store));
+        cx.set_global(GlobalEditorStore(store));
     }
 
     pub fn global(cx: &App) -> Entity<Self> {
-        cx.global::<GlobalBufferStore>().0.clone()
+        cx.global::<GlobalEditorStore>().0.clone()
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
-        // Set up polling for external changes every 500ms
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -57,7 +55,6 @@ impl BufferStore {
     }
 
     pub fn open_buffer(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Option<Entity<Buffer>> {
-        // Canonicalize path for consistent lookup
         let canonical_path = path.canonicalize().unwrap_or(path.clone());
 
         if let Some(entry) = self.buffers.get_mut(&canonical_path) {
@@ -65,11 +62,8 @@ impl BufferStore {
             return Some(entry.buffer.clone());
         }
 
-        // Create new buffer
         let buffer = cx.new(|cx| {
             Buffer::load(canonical_path.clone(), cx).unwrap_or_else(|_| {
-                // If file doesn't exist or can't be read, create empty buffer
-                // This shouldn't happen normally since we're opening from file tree
                 panic!("Failed to load buffer for {:?}", canonical_path)
             })
         });
@@ -82,7 +76,7 @@ impl BufferStore {
             },
         );
 
-        cx.emit(BufferStoreEvent::BufferOpened);
+        cx.emit(EditorStoreEvent::BufferOpened);
         Some(buffer)
     }
 
@@ -95,7 +89,6 @@ impl BufferStore {
             if has_changes {
                 buffer.update(cx, |buf, cx| {
                     cx.emit(BufferEvent::ExternalChange);
-                    // Auto-reload if not dirty
                     if !is_dirty {
                         let _ = buf.reload(cx);
                     }

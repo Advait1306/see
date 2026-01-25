@@ -1,23 +1,21 @@
-use crate::config;
-use crate::file_watcher::FileWatcher;
+use crate::editor::EditorStore;
+use crate::file_tree_store::FileEntry;
+use crate::ui::pane::TabItem;
+use crate::ui::EditorView;
+use crate::window_store::WindowStore;
+use crate::workspace::{Workspace, WorkspaceEvent};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
 use gpui_component::theme::ActiveTheme;
 use gpui_component::{Icon, IconName, IndexPath, Selectable, Sizable};
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::PathBuf;
 
-/// A wrapper around ListItem that ignores selection styling.
-/// This allows clicks to still work for directory toggling while
-/// preventing the visual selection highlight.
 pub struct NonSelectableItem(ListItem);
 
 impl Selectable for NonSelectableItem {
     fn selected(self, _selected: bool) -> Self {
-        self // Ignore selection
+        self
     }
 
     fn is_selected(&self) -> bool {
@@ -25,7 +23,7 @@ impl Selectable for NonSelectableItem {
     }
 
     fn secondary_selected(self, _selected: bool) -> Self {
-        self // Ignore secondary selection
+        self
     }
 }
 
@@ -37,17 +35,8 @@ impl IntoElement for NonSelectableItem {
     }
 }
 
-#[derive(Clone)]
-pub struct FileEntry {
-    pub name: String,
-    pub path: PathBuf,
-    pub is_dir: bool,
-    pub depth: usize,
-}
-
 pub struct FileTreeDelegate {
     entries: Vec<FileEntry>,
-    expanded_paths: HashSet<PathBuf>,
     selected_index: Option<usize>,
 }
 
@@ -65,7 +54,7 @@ impl ListDelegate for FileTreeDelegate {
         cx: &mut Context<ListState<Self>>,
     ) -> Option<Self::Item> {
         let entry = self.entries.get(ix.row)?;
-        let is_expanded = self.expanded_paths.contains(&entry.path);
+        let is_expanded = entry.is_expanded;
         let depth = entry.depth;
         let is_dir = entry.is_dir;
         let name = entry.name.clone();
@@ -156,159 +145,122 @@ impl ListDelegate for FileTreeDelegate {
     }
 }
 
-// Events emitted by the file tree
-pub enum FileTreeEvent {
-    OpenFile(PathBuf),
-}
-
-/// Serializable state for file tree persistence
-#[derive(Serialize, Deserialize, Default, Clone)]
-pub struct FileTreeState {
-    pub expanded_paths_by_workspace: HashMap<String, HashSet<PathBuf>>,
-}
-
 pub struct FileTree {
-    root_path: PathBuf,
-    active_workspace_id: String,
-    expanded_paths_by_workspace: HashMap<String, HashSet<PathBuf>>,
-    watcher: Option<FileWatcher>,
+    window_store: Entity<WindowStore>,
     list_state: Option<Entity<ListState<FileTreeDelegate>>>,
     focus_handle: FocusHandle,
+    _window_store_subscription: Subscription,
+    _workspace_subscription: Option<Subscription>,
 }
 
-impl EventEmitter<FileTreeEvent> for FileTree {}
-
 impl FileTree {
-    pub fn new(workspace_id: String, root_path: PathBuf, cx: &mut Context<Self>) -> Self {
-        let watcher = FileWatcher::new(root_path.clone()).ok();
-
-        let mut tree = Self {
-            root_path: root_path.clone(),
-            active_workspace_id: workspace_id.clone(),
-            expanded_paths_by_workspace: HashMap::new(),
-            watcher,
-            list_state: None,
-            focus_handle: cx.focus_handle(),
-        };
-
-        // Load persisted state
-        tree.load_state();
-
-        // Always expand root for current workspace
-        tree.expanded_paths_by_workspace
-            .entry(workspace_id)
-            .or_default()
-            .insert(root_path);
-
-        // Set up polling for file changes
-        cx.spawn(async move |this, cx| {
-            loop {
-                smol::Timer::after(std::time::Duration::from_millis(500)).await;
-                let should_refresh = this
-                    .update(cx, |tree, _cx| {
-                        if let Some(watcher) = &tree.watcher {
-                            let changes = watcher.poll_changes();
-                            !changes.is_empty()
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false);
-
-                if should_refresh {
-                    let _ = this.update(cx, |tree, cx| {
-                        tree.refresh_entries(cx);
-                        cx.notify();
-                    });
+    pub fn new(
+        window_store: Entity<WindowStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let window_store_sub = cx.subscribe(&window_store, |this, _store, event, cx| {
+            use crate::window_store::WindowStoreEvent;
+            match event {
+                WindowStoreEvent::ActiveWorkspaceChanged => {
+                    this.refresh_entries(cx);
+                    this.subscribe_to_active_workspace(cx);
+                }
+                WindowStoreEvent::UiStateChanged => {
+                    // UI state changes (sidebar collapsed, file tree visibility) don't affect file tree content
                 }
             }
-        })
-        .detach();
+        });
 
-        tree
-    }
-
-    /// Switch to a different workspace
-    pub fn set_workspace(&mut self, workspace_id: String, root_path: PathBuf, cx: &mut Context<Self>) {
-        self.active_workspace_id = workspace_id.clone();
-        self.root_path = root_path.clone();
-
-        // Always expand root for new workspace
-        self.expanded_paths_by_workspace
-            .entry(workspace_id)
-            .or_default()
-            .insert(root_path.clone());
-
-        // Update file watcher
-        self.watcher = FileWatcher::new(root_path).ok();
-
-        // Refresh the list
-        self.refresh_entries(cx);
-        cx.notify();
-    }
-
-    /// Get expanded paths for current workspace
-    pub fn expanded_paths(&self) -> &HashSet<PathBuf> {
-        static EMPTY: std::sync::LazyLock<HashSet<PathBuf>> =
-            std::sync::LazyLock::new(HashSet::new);
-        self.expanded_paths_by_workspace
-            .get(&self.active_workspace_id)
-            .unwrap_or(&EMPTY)
-    }
-
-    /// Toggle expansion for a path in current workspace
-    pub fn toggle_expanded(&mut self, path: &PathBuf, cx: &mut Context<Self>) {
-        let paths = self
-            .expanded_paths_by_workspace
-            .entry(self.active_workspace_id.clone())
-            .or_default();
-
-        if paths.contains(path) {
-            paths.remove(path);
-        } else {
-            paths.insert(path.clone());
-        }
-
-        self.refresh_entries(cx);
-        self.save_state();
-        cx.notify();
-    }
-
-    /// Load persisted state
-    pub fn load_state(&mut self) {
-        let state: FileTreeState = config::load_json(&config::file_tree_state_path());
-        self.expanded_paths_by_workspace = state.expanded_paths_by_workspace;
-    }
-
-    /// Save state to disk
-    pub fn save_state(&self) {
-        let state = FileTreeState {
-            expanded_paths_by_workspace: self.expanded_paths_by_workspace.clone(),
+        let mut file_tree = Self {
+            window_store,
+            list_state: None,
+            focus_handle: cx.focus_handle(),
+            _window_store_subscription: window_store_sub,
+            _workspace_subscription: None,
         };
-        config::save_json(&config::file_tree_state_path(), &state);
+
+        file_tree.subscribe_to_active_workspace(cx);
+        file_tree
+    }
+
+    fn subscribe_to_active_workspace(&mut self, cx: &mut Context<Self>) {
+        self._workspace_subscription = self.active_workspace(cx).map(|workspace| {
+            cx.subscribe(&workspace, |this, _workspace, event, cx| {
+                if matches!(event, WorkspaceEvent::FileTreeChanged) {
+                    this.refresh_entries(cx);
+                }
+            })
+        });
+    }
+
+    fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
+        let window_store = self.window_store.read(cx);
+        window_store.active_workspace(cx).cloned()
+    }
+
+    fn entries(&self, cx: &App) -> Vec<FileEntry> {
+        if let Some(workspace) = self.active_workspace(cx) {
+            let ws = workspace.read(cx);
+            ws.file_tree_store().read(cx).entries().clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn toggle_expanded(&self, path: &PathBuf, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.active_workspace(cx) {
+            let file_tree_store = workspace.read(cx).file_tree_store().clone();
+            file_tree_store.update(cx, |store, cx| {
+                store.toggle_expanded(path, cx);
+            });
+        }
+    }
+
+    fn open_file(&self, path: PathBuf, cx: &mut Context<Self>) {
+        let Some(workspace) = self.active_workspace(cx) else {
+            return;
+        };
+
+        let buffer_store = EditorStore::global(cx);
+        let buffer = buffer_store.update(cx, |store, cx| {
+            store.open_buffer(path.clone(), cx)
+        });
+
+        let Some(buffer) = buffer else {
+            log::error!("Failed to open buffer for {:?}", path);
+            return;
+        };
+
+        let pane_store = workspace.read(cx).pane_store().clone();
+        pane_store.update(cx, |ps, cx| {
+            if let Some(pane) = ps.active_pane.clone() {
+                pane.update(cx, |p, cx| {
+                    let editor_view = cx.new(|cx| EditorView::new(buffer, path, cx));
+                    p.tabs.push(TabItem::Editor(editor_view));
+                    p.active_index = p.tabs.len() - 1;
+                    cx.notify();
+                });
+            }
+        });
     }
 
     fn ensure_list_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.list_state.is_none() {
-            let expanded_paths = self.expanded_paths().clone();
-            let entries = Self::scan_directory_static(&self.root_path, 0, &expanded_paths);
+            let entries = self.entries(cx);
             let delegate = FileTreeDelegate {
                 entries,
-                expanded_paths,
                 selected_index: None,
             };
             let list_state = cx.new(|cx| ListState::new(delegate, window, cx));
 
-            // Subscribe to click events (Confirm) to handle directory toggling and file opening
             cx.subscribe(&list_state, |this, list_entity, event: &ListEvent, cx| {
                 if let ListEvent::Confirm(ix) = event {
                     let entry = list_entity.read(cx).delegate().entries.get(ix.row).cloned();
                     if let Some(entry) = entry {
                         if entry.is_dir {
-                            // Handle directory toggle internally
                             this.toggle_expanded(&entry.path, cx);
                         } else {
-                            cx.emit(FileTreeEvent::OpenFile(entry.path));
+                            this.open_file(entry.path, cx);
                         }
                     }
                 }
@@ -320,68 +272,14 @@ impl FileTree {
     }
 
     fn refresh_entries(&mut self, cx: &mut Context<Self>) {
-        let expanded_paths = self.expanded_paths().clone();
-        let entries = Self::scan_directory_static(&self.root_path, 0, &expanded_paths);
+        let entries = self.entries(cx);
         if let Some(list_state) = &self.list_state {
             list_state.update(cx, |state, _cx| {
                 state.delegate_mut().entries = entries;
-                state.delegate_mut().expanded_paths = expanded_paths;
             });
         }
+        cx.notify();
     }
-
-    fn scan_directory_static(
-        path: &PathBuf,
-        depth: usize,
-        expanded_paths: &HashSet<PathBuf>,
-    ) -> Vec<FileEntry> {
-        let mut entries = Vec::new();
-
-        let Ok(read_dir) = fs::read_dir(path) else {
-            return entries;
-        };
-
-        let mut items: Vec<_> = read_dir
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                let name = entry.file_name().to_string_lossy().to_string();
-                !name.starts_with('.')
-                    && name != "node_modules"
-                    && name != "target"
-                    && name != "__pycache__"
-            })
-            .collect();
-
-        items.sort_by(|a, b| {
-            let a_is_dir = a.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            let b_is_dir = b.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            match (a_is_dir, b_is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.file_name().cmp(&b.file_name()),
-            }
-        });
-
-        for entry in items {
-            let entry_path = entry.path();
-            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            let name = entry.file_name().to_string_lossy().to_string();
-
-            entries.push(FileEntry {
-                name,
-                path: entry_path.clone(),
-                is_dir,
-                depth,
-            });
-
-            if is_dir && expanded_paths.contains(&entry_path) {
-                entries.extend(Self::scan_directory_static(&entry_path, depth + 1, expanded_paths));
-            }
-        }
-
-        entries
-    }
-
 }
 
 impl Render for FileTree {
