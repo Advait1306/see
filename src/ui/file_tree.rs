@@ -2,6 +2,7 @@ use crate::file_watcher::FileWatcher;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
+use gpui_component::theme::ActiveTheme;
 use gpui_component::{Icon, IconName, IndexPath, Selectable, Sizable};
 use std::collections::HashSet;
 use std::fs;
@@ -59,13 +60,18 @@ impl ListDelegate for FileTreeDelegate {
         &mut self,
         ix: IndexPath,
         _window: &mut Window,
-        _cx: &mut Context<ListState<Self>>,
+        cx: &mut Context<ListState<Self>>,
     ) -> Option<Self::Item> {
         let entry = self.entries.get(ix.row)?;
         let is_expanded = self.expanded_paths.contains(&entry.path);
         let depth = entry.depth;
         let is_dir = entry.is_dir;
         let name = entry.name.clone();
+
+        let theme = cx.theme();
+        let muted_color = theme.muted_foreground;
+        let blue_color = theme.primary;
+        let foreground_color = theme.foreground;
 
         Some(NonSelectableItem(
             ListItem::new(ix)
@@ -95,7 +101,7 @@ impl ListDelegate for FileTreeDelegate {
                                     el.child(
                                         Icon::new(chevron_icon)
                                             .xsmall()
-                                            .text_color(rgb(0x6c7086)),
+                                            .text_color(muted_color),
                                     )
                                 }),
                         )
@@ -107,16 +113,16 @@ impl ListDelegate for FileTreeDelegate {
                             };
                             Icon::new(folder_icon)
                                 .small()
-                                .text_color(rgb(0x89b4fa))
+                                .text_color(blue_color)
                         } else {
                             Icon::new(IconName::File)
                                 .small()
-                                .text_color(rgb(0xa6adc8))
+                                .text_color(muted_color)
                         }))
                         .child(
                             div()
                                 .text_sm()
-                                .text_color(rgb(0xcdd6f4))
+                                .text_color(foreground_color)
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .child(name),
@@ -128,12 +134,13 @@ impl ListDelegate for FileTreeDelegate {
     fn render_empty(
         &mut self,
         _window: &mut Window,
-        _cx: &mut Context<ListState<Self>>,
+        cx: &mut Context<ListState<Self>>,
     ) -> impl IntoElement {
+        let muted_color = cx.theme().muted_foreground;
         div()
             .p(px(12.0))
             .text_sm()
-            .text_color(rgb(0x6c7086))
+            .text_color(muted_color)
             .child("No files")
     }
 
@@ -313,6 +320,7 @@ impl Render for FileTree {
         self.ensure_list_state(window, cx);
 
         let list_state = self.list_state.clone().unwrap();
+        let sidebar_color = cx.theme().sidebar;
 
         div()
             .id("file-tree")
@@ -320,7 +328,7 @@ impl Render for FileTree {
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(0x181825))
+            .bg(sidebar_color)
             .pt(px(8.0))
             .child(List::new(&list_state).py_0())
     }

@@ -1,4 +1,5 @@
 mod config;
+mod constants;
 mod editor;
 mod file_watcher;
 mod terminal;
@@ -6,7 +7,6 @@ mod ui;
 mod workspace;
 
 use gpui::*;
-use gpui_component::theme::Theme;
 use gpui_component::Root;
 use gpui_component_assets::Assets;
 use std::borrow::Cow;
@@ -28,22 +28,8 @@ fn main() {
             .add_fonts(vec![Cow::Borrowed(font_data.as_slice())])
             .expect("Failed to load Paper Mono font");
 
-        // Customize theme to match Catppuccin Mocha
-        {
-            let theme = Theme::global_mut(cx);
-            // Sidebar colors
-            theme.sidebar = rgb(0x181825).into();
-            theme.sidebar_foreground = rgb(0xcdd6f4).into();
-            theme.sidebar_accent = rgb(0x313244).into();
-            theme.sidebar_accent_foreground = rgb(0xcdd6f4).into();
-            theme.sidebar_border = rgb(0x313244).into();
-            // General colors
-            theme.background = rgb(0x1e1e2e).into();
-            theme.foreground = rgb(0xcdd6f4).into();
-            theme.muted = rgb(0x6c7086).into();
-            theme.muted_foreground = rgb(0xa6adc8).into();
-            theme.border = rgb(0x313244).into();
-        }
+        // Using gpui-component's default dark theme
+        // No custom color overrides needed - the theme provides all colors via cx.theme()
 
         // Load saved state
         let saved_state = config::load_state();
@@ -96,16 +82,6 @@ fn main() {
                 return;
             }
 
-            // Debug: log keystrokes with platform modifier
-            if key.modifiers.platform {
-                log::info!(
-                    "Key: '{}', alt={}, shift={}",
-                    key.key,
-                    key.modifiers.alt,
-                    key.modifiers.shift
-                );
-            }
-
             if key.modifiers.platform {
                 // Cmd+Q - quit application (doesn't need app_view)
                 if key.key.as_str() == "q" && !key.modifiers.alt {
@@ -123,7 +99,7 @@ fn main() {
                                 app.close_current_terminal(cx);
                             });
                         }
-                        // Cmd+Shift+[ and ] (shown as { and }) - switch terminals
+                        // Cmd+Shift+[ and ] (shown as { and }) - switch tabs
                         ("{", false) => {
                             cx.stop_propagation();
                             app_view.update(cx, |app, cx| {

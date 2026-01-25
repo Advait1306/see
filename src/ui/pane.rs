@@ -4,6 +4,7 @@ use crate::ui::editor_view::EditorView;
 use crate::ui::TerminalView;
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::theme::ActiveTheme;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -69,14 +70,15 @@ pub struct DraggedTab {
 impl Render for DraggedTab {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let label = self.tab.label(cx);
+        let theme = cx.theme();
         div()
             .px_3()
             .py_1()
-            .bg(rgb(0x313244))
+            .bg(theme.border)
             .border_1()
-            .border_color(rgb(0x45475a))
+            .border_color(theme.list_active)
             .rounded_md()
-            .text_color(rgb(0xcdd6f4))
+            .text_color(theme.foreground)
             .text_xs()
             .child(label)
     }
@@ -186,13 +188,19 @@ impl Pane {
     fn render_tab_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         let pane_entity = cx.entity().clone();
         let mut terminal_idx = 0usize;
+        let theme = cx.theme();
+        let tab_bar_bg = theme.tab_bar;
+        let border_color = theme.border;
+        let background_color = theme.background;
+        let foreground_color = theme.foreground;
+        let muted_color = theme.muted_foreground;
 
         div()
             .flex()
             .h(px(32.0))
-            .bg(rgb(0x11111b))
+            .bg(tab_bar_bg)
             .border_b_1()
-            .border_color(rgb(0x313244))
+            .border_color(border_color)
             .items_center()
             .px_2()
             .gap_1()
@@ -254,12 +262,12 @@ impl Pane {
                     .py_1()
                     .rounded_sm()
                     .cursor_pointer()
-                    .when(is_active, |el| el.bg(rgb(0x1e1e2e)))
-                    .when(!is_active, |el| el.hover(|el| el.bg(rgb(0x313244))))
+                    .when(is_active, |el| el.bg(background_color))
+                    .when(!is_active, |el| el.hover(|el| el.bg(border_color)))
                     .text_color(if is_active {
-                        rgb(0xcdd6f4)
+                        foreground_color
                     } else {
-                        rgb(0x6c7086)
+                        muted_color
                     })
                     .text_xs()
                     .on_click(cx.listener(move |this, _, _window, cx| {
@@ -282,8 +290,8 @@ impl Pane {
                     .py_1()
                     .rounded_sm()
                     .cursor_pointer()
-                    .hover(|el| el.bg(rgb(0x313244)))
-                    .text_color(rgb(0x6c7086))
+                    .hover(|el| el.bg(border_color))
+                    .text_color(muted_color)
                     .text_xs()
                     .on_click(cx.listener(|this, _, _window, cx| {
                         this.add_terminal(cx);
@@ -294,7 +302,9 @@ impl Pane {
     }
 
     fn render_drop_zones(&self, cx: &Context<Self>) -> impl IntoElement {
-        let drop_color = rgba(0x89b4fa4d); // Blue with ~30% opacity
+        // Use theme primary color with alpha for drop zones
+        let mut drop_color = cx.theme().primary;
+        drop_color.a = 0.3;
 
         // Create invisible edge zones that show highlight on drag-over
         div()
@@ -415,6 +425,7 @@ impl Render for Pane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let active_tab = self.active_tab().cloned();
+        let theme = cx.theme();
 
         div()
             .id("pane")
@@ -424,9 +435,9 @@ impl Render for Pane {
             .flex()
             .flex_col()
             .relative()
-            .bg(rgb(0x1e1e2e))
+            .bg(theme.background)
             .border_1()
-            .border_color(rgb(0x313244))
+            .border_color(theme.border)
             .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, cx| {
                 cx.emit(PaneEvent::Focus);
             }))

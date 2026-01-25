@@ -1,72 +1,9 @@
+use crate::constants::{CELL_HEIGHT, CELL_WIDTH, PADDING};
 use crate::editor::{Buffer, BufferEvent, EditorState};
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::theme::ActiveTheme;
 use std::path::PathBuf;
-
-// Editor dimensions (same as terminal for consistency)
-const CELL_WIDTH: f32 = 7.8;
-const CELL_HEIGHT: f32 = 18.0;
-const PADDING: f32 = 8.0;
-
-// Colors (Catppuccin Mocha theme)
-fn default_fg() -> Hsla {
-    Rgba {
-        r: 0xcd as f32 / 255.0,
-        g: 0xd6 as f32 / 255.0,
-        b: 0xf4 as f32 / 255.0,
-        a: 1.0,
-    }
-    .into()
-}
-
-fn default_bg() -> Hsla {
-    Rgba {
-        r: 0x1e as f32 / 255.0,
-        g: 0x1e as f32 / 255.0,
-        b: 0x2e as f32 / 255.0,
-        a: 1.0,
-    }
-    .into()
-}
-
-fn cursor_color() -> Hsla {
-    Rgba {
-        r: 0xcd as f32 / 255.0,
-        g: 0xd6 as f32 / 255.0,
-        b: 0xf4 as f32 / 255.0,
-        a: 1.0,
-    }
-    .into()
-}
-
-fn cursor_unfocused_color() -> Hsla {
-    Rgba {
-        r: 0x6c as f32 / 255.0,
-        g: 0x70 as f32 / 255.0,
-        b: 0x86 as f32 / 255.0,
-        a: 1.0,
-    }
-    .into()
-}
-
-fn line_number_color() -> Hsla {
-    Rgba {
-        r: 0x6c as f32 / 255.0,
-        g: 0x70 as f32 / 255.0,
-        b: 0x86 as f32 / 255.0,
-        a: 1.0,
-    }
-    .into()
-}
-
-fn selection_color() -> Hsla {
-    Hsla {
-        h: 0.62,
-        s: 0.60,
-        l: 0.55,
-        a: 0.35,
-    }
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SelectionPhase {
@@ -1110,8 +1047,17 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // Get theme colors
+        let theme = cx.theme();
+        let background_color = theme.background;
+        let foreground_color = theme.foreground;
+        let muted_foreground_color = theme.muted_foreground;
+        let selection_color = theme.selection;
+        let caret_color = theme.caret;
+        let sidebar_color = theme.sidebar;
+
         // Paint background
-        window.paint_quad(fill(bounds, default_bg()));
+        window.paint_quad(fill(bounds, background_color));
 
         let origin = bounds.origin;
 
@@ -1123,14 +1069,7 @@ impl Element for EditorElement {
                 height: bounds.size.height - px(PADDING * 2.0),
             },
         };
-        let line_number_bg: Hsla = Rgba {
-            r: 0x18 as f32 / 255.0,
-            g: 0x18 as f32 / 255.0,
-            b: 0x25 as f32 / 255.0,
-            a: 1.0,
-        }
-        .into();
-        window.paint_quad(fill(line_numbers_bounds, line_number_bg));
+        window.paint_quad(fill(line_numbers_bounds, sidebar_color));
 
         let font = Font {
             family: "Paper Mono".into(),
@@ -1151,7 +1090,7 @@ impl Element for EditorElement {
             let line_num_run = TextRun {
                 len: line_num_str.len(),
                 font: font.clone(),
-                color: line_number_color(),
+                color: muted_foreground_color,
                 background_color: None,
                 underline: None,
                 strikethrough: None,
@@ -1187,7 +1126,6 @@ impl Element for EditorElement {
 
         window.with_content_mask(Some(ContentMask { bounds: text_area_bounds }), |window| {
             // Paint selection highlights first (behind text)
-            let selection_bg = selection_color();
             for range in &layout.selection_ranges {
                 let y = origin.y + px(PADDING + (range.line_idx as f32 * CELL_HEIGHT));
                 let x = origin.x + px(text_x_base + (range.start_col as f32 * CELL_WIDTH));
@@ -1203,7 +1141,7 @@ impl Element for EditorElement {
                         height: px(CELL_HEIGHT),
                     },
                 );
-                window.paint_quad(fill(selection_bounds, selection_bg));
+                window.paint_quad(fill(selection_bounds, selection_color));
             }
 
             // Paint text
@@ -1214,7 +1152,7 @@ impl Element for EditorElement {
                     let text_run = TextRun {
                         len: content.len(),
                         font: font.clone(),
-                        color: default_fg(),
+                        color: foreground_color,
                         background_color: None,
                         underline: None,
                         strikethrough: None,
@@ -1247,9 +1185,9 @@ impl Element for EditorElement {
                     };
 
                     let color = if is_focused {
-                        cursor_color()
+                        caret_color
                     } else {
-                        cursor_unfocused_color()
+                        muted_foreground_color
                     };
 
                     window.paint_quad(fill(cursor_bounds, color));

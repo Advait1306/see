@@ -1,6 +1,7 @@
 use crate::ui::pane::{Axis, Pane, PaneEvent, SplitDirection};
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::theme::ActiveTheme;
 use std::path::PathBuf;
 
 const MIN_PANE_SIZE: f32 = 100.0;
@@ -167,6 +168,9 @@ impl PaneAxis {
         cx: &mut Context<PaneGroup>,
     ) -> impl IntoElement {
         let is_horizontal = axis == Axis::Horizontal;
+        let theme = cx.theme();
+        let border_color = theme.border;
+        let hover_color = theme.list_active;
 
         div()
             .id(ElementId::Name(
@@ -184,8 +188,8 @@ impl PaneAxis {
             } else {
                 CursorStyle::ResizeUpDown
             })
-            .bg(rgb(0x313244))
-            .hover(|el| el.bg(rgb(0x45475a)))
+            .bg(border_color)
+            .hover(|el| el.bg(hover_color))
             .on_drag(
                 DividerDrag {
                     axis,

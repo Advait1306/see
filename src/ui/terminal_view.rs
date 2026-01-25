@@ -1,3 +1,4 @@
+use crate::constants::{ANSI_COLORS, CELL_HEIGHT, CELL_WIDTH, PADDING, rgb_to_hsla};
 use crate::terminal::Terminal;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as AlacPoint, Side};
@@ -7,40 +8,11 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape as AlacCursorShape, NamedColor};
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::theme::ActiveTheme;
 use std::sync::Arc;
 use std::time::Duration;
 
-// ANSI 256 color palette
-const ANSI_COLORS: [(u8, u8, u8); 16] = [
-    (0x1e, 0x1e, 0x2e), // 0: Black (background)
-    (0xf3, 0x8b, 0xa8), // 1: Red
-    (0xa6, 0xe3, 0xa1), // 2: Green
-    (0xf9, 0xe2, 0xaf), // 3: Yellow
-    (0x89, 0xb4, 0xfa), // 4: Blue
-    (0xf5, 0xc2, 0xe7), // 5: Magenta
-    (0x94, 0xe2, 0xd5), // 6: Cyan
-    (0xcd, 0xd6, 0xf4), // 7: White (foreground)
-    (0x58, 0x5b, 0x70), // 8: Bright Black
-    (0xf3, 0x8b, 0xa8), // 9: Bright Red
-    (0xa6, 0xe3, 0xa1), // 10: Bright Green
-    (0xf9, 0xe2, 0xaf), // 11: Bright Yellow
-    (0x89, 0xb4, 0xfa), // 12: Bright Blue
-    (0xf5, 0xc2, 0xe7), // 13: Bright Magenta
-    (0x94, 0xe2, 0xd5), // 14: Bright Cyan
-    (0xcd, 0xd6, 0xf4), // 15: Bright White
-];
-
-fn rgb_color(r: u8, g: u8, b: u8) -> Hsla {
-    Rgba {
-        r: r as f32 / 255.0,
-        g: g as f32 / 255.0,
-        b: b as f32 / 255.0,
-        a: 1.0,
-    }
-    .into()
-}
-
-fn ansi_to_hsla(color: AnsiColor) -> Option<Hsla> {
+fn ansi_to_hsla(color: AnsiColor, default_fg: Hsla, default_bg: Hsla) -> Option<Hsla> {
     match color {
         AnsiColor::Named(named) => {
             let idx = match named {
@@ -60,60 +32,29 @@ fn ansi_to_hsla(color: AnsiColor) -> Option<Hsla> {
                 NamedColor::BrightMagenta => 13,
                 NamedColor::BrightCyan => 14,
                 NamedColor::BrightWhite => 15,
-                NamedColor::Foreground => return Some(default_fg()),
-                NamedColor::Background => return Some(default_bg()),
+                NamedColor::Foreground => return Some(default_fg),
+                NamedColor::Background => return Some(default_bg),
                 _ => return None,
             };
             let (r, g, b) = ANSI_COLORS[idx];
-            Some(rgb_color(r, g, b))
+            Some(rgb_to_hsla(r, g, b))
         }
-        AnsiColor::Spec(c) => Some(rgb_color(c.r, c.g, c.b)),
+        AnsiColor::Spec(c) => Some(rgb_to_hsla(c.r, c.g, c.b)),
         AnsiColor::Indexed(idx) => {
             if idx < 16 {
                 let (r, g, b) = ANSI_COLORS[idx as usize];
-                Some(rgb_color(r, g, b))
+                Some(rgb_to_hsla(r, g, b))
             } else if idx < 232 {
                 let idx = idx - 16;
                 let r = if idx / 36 > 0 { (idx / 36) * 40 + 55 } else { 0 };
                 let g = if (idx / 6) % 6 > 0 { ((idx / 6) % 6) * 40 + 55 } else { 0 };
                 let b = if idx % 6 > 0 { (idx % 6) * 40 + 55 } else { 0 };
-                Some(rgb_color(r, g, b))
+                Some(rgb_to_hsla(r, g, b))
             } else {
                 let gray = (idx - 232) * 10 + 8;
-                Some(rgb_color(gray, gray, gray))
+                Some(rgb_to_hsla(gray, gray, gray))
             }
         }
-    }
-}
-
-// Terminal dimensions
-const CELL_WIDTH: f32 = 7.8;
-const CELL_HEIGHT: f32 = 18.0;
-const PADDING: f32 = 8.0;
-
-// Default colors
-fn default_fg() -> Hsla {
-    rgb_color(0xcd, 0xd6, 0xf4)
-}
-
-fn default_bg() -> Hsla {
-    rgb_color(0x1e, 0x1e, 0x2e)
-}
-
-fn cursor_color() -> Hsla {
-    rgb_color(0xcd, 0xd6, 0xf4)
-}
-
-fn cursor_unfocused_color() -> Hsla {
-    rgb_color(0x6c, 0x70, 0x86)
-}
-
-fn selection_color() -> Hsla {
-    Hsla {
-        h: 0.62,
-        s: 0.60,
-        l: 0.55,
-        a: 0.35,
     }
 }
 
@@ -155,6 +96,7 @@ struct CursorLayout {
     block_width: Pixels,
     line_height: Pixels,
     color: Hsla,
+    text_color: Hsla, // Color for text on block cursor
     shape: CursorShape,
     cursor_char: Option<char>,
 }
@@ -165,6 +107,7 @@ impl CursorLayout {
         block_width: Pixels,
         line_height: Pixels,
         color: Hsla,
+        text_color: Hsla,
         shape: CursorShape,
         cursor_char: Option<char>,
     ) -> Self {
@@ -173,6 +116,7 @@ impl CursorLayout {
             block_width,
             line_height,
             color,
+            text_color,
             shape,
             cursor_char,
         }
@@ -232,7 +176,7 @@ impl CursorLayout {
                     let text_run = TextRun {
                         len: c.len_utf8(),
                         font,
-                        color: default_bg(),
+                        color: self.text_color,
                         background_color: None,
                         underline: None,
                         strikethrough: None,
@@ -599,6 +543,9 @@ struct TerminalLayoutState {
     text_runs: Vec<BatchedTextRun>,
     cursor: Option<CursorLayout>,
     selection_ranges: Vec<SelectionLineRange>,
+    // Theme colors for paint
+    background_color: Hsla,
+    selection_color: Hsla,
 }
 
 impl IntoElement for TerminalElement {
@@ -642,8 +589,16 @@ impl Element for TerminalElement {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _window: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Self::PrepaintState {
+        // Get theme colors
+        let theme = cx.theme();
+        let default_fg = theme.foreground;
+        let default_bg = theme.background;
+        let selection_color = theme.selection;
+        let caret_color = theme.caret;
+        let muted_foreground = theme.muted_foreground;
+
         // Store bounds for mouse event coordinate conversion
         *self.bounds_out.lock() = Some(bounds);
 
@@ -701,9 +656,9 @@ impl Element for TerminalElement {
                 };
 
                 let cursor_color = if self.is_focused {
-                    cursor_color()
+                    caret_color
                 } else {
-                    cursor_unfocused_color()
+                    muted_foreground
                 };
 
                 // Get the character under the cursor for block cursor text rendering
@@ -727,6 +682,7 @@ impl Element for TerminalElement {
                     px(CELL_WIDTH),
                     px(CELL_HEIGHT),
                     cursor_color,
+                    default_bg, // Text color on block cursor
                     shape,
                     cursor_char,
                 ));
@@ -799,13 +755,13 @@ impl Element for TerminalElement {
                             std::mem::swap(&mut fg, &mut bg);
                         }
 
-                        let fg = ansi_to_hsla(fg).unwrap_or_else(default_fg);
+                        let fg = ansi_to_hsla(fg, default_fg, default_bg).unwrap_or(default_fg);
                         // Only set background if it's not the default background
                         // (so selection highlights can show through)
                         let bg = if matches!(bg, AnsiColor::Named(NamedColor::Background)) {
                             None
                         } else {
-                            ansi_to_hsla(bg)
+                            ansi_to_hsla(bg, default_fg, default_bg)
                         };
                         (fg, bg)
                     };
@@ -839,7 +795,13 @@ impl Element for TerminalElement {
             }
         });
 
-        TerminalLayoutState { text_runs, cursor, selection_ranges }
+        TerminalLayoutState {
+            text_runs,
+            cursor,
+            selection_ranges,
+            background_color: default_bg,
+            selection_color,
+        }
     }
 
     fn paint(
@@ -857,10 +819,9 @@ impl Element for TerminalElement {
         let origin = bounds.origin + gpui::point(px(PADDING), px(PADDING));
 
         // Paint background
-        window.paint_quad(fill(bounds, default_bg()));
+        window.paint_quad(fill(bounds, layout.background_color));
 
         // Paint selection highlights (before text so it appears behind)
-        let selection_bg = selection_color();
         for range in &layout.selection_ranges {
             let pos = gpui::Point::new(
                 origin.x + px(range.start_col as f32 * CELL_WIDTH),
@@ -874,7 +835,7 @@ impl Element for TerminalElement {
                     height: line_height,
                 },
             );
-            window.paint_quad(fill(bounds, selection_bg));
+            window.paint_quad(fill(bounds, layout.selection_color));
         }
 
         // Paint text runs

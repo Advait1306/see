@@ -7,9 +7,9 @@ use crate::ui::pane_group::{Member, PaneAxis, PaneGroup, PaneGroupEvent};
 use crate::workspace::{WorkspaceManager, WorkspaceEvent};
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::{Icon, IconName, Sizable};
 use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
-use gpui_component::{Collapsible, Side};
+use gpui_component::theme::ActiveTheme;
+use gpui_component::{Collapsible, Icon, IconName, Sizable, Side};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -568,8 +568,9 @@ impl AppView {
         }
     }
 
-    fn render_file_tree_sidebar(&self, _cx: &Context<Self>) -> impl IntoElement {
+    fn render_file_tree_sidebar(&self, cx: &Context<Self>) -> impl IntoElement {
         let file_tree = self.file_tree.clone();
+        let theme = cx.theme();
 
         div()
             .id("file-tree-sidebar")
@@ -577,8 +578,8 @@ impl AppView {
             .h_full()
             .flex_shrink_0()
             .border_l_1()
-            .border_color(rgb(0x313244))
-            .bg(rgb(0x181825))
+            .border_color(theme.border)
+            .bg(theme.sidebar)
             .map(|el| {
                 if let Some(ft) = file_tree {
                     el.child(ft)
@@ -600,6 +601,12 @@ impl Render for AppView {
             .cloned();
 
         let focus_handle = self.focus_handle.clone();
+        let theme = cx.theme();
+        let icon_color = if self.file_tree_visible {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        };
 
         div()
             .id("app-view")
@@ -608,8 +615,8 @@ impl Render for AppView {
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(0x1e1e2e))
-            .text_color(rgb(0xcdd6f4))
+            .bg(theme.background)
+            .text_color(theme.foreground)
             // Custom title bar
             .child(
                 div()
@@ -619,9 +626,9 @@ impl Render for AppView {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .bg(rgb(0x181825))
+                    .bg(theme.sidebar)
                     .border_b_1()
-                    .border_color(rgb(0x313244))
+                    .border_color(theme.border)
                     // Make the title bar draggable for window movement
                     .on_mouse_move(|_, _, _| {})
                     // Left spacer for traffic lights
@@ -630,7 +637,7 @@ impl Render for AppView {
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(0x6c7086))
+                            .text_color(theme.muted_foreground)
                             .child(config::APP_NAME)
                     )
                     // Right side with toggle button
@@ -646,18 +653,14 @@ impl Render for AppView {
                                     .p(px(6.0))
                                     .rounded(px(4.0))
                                     .cursor_pointer()
-                                    .hover(|s| s.bg(rgb(0x313244)))
+                                    .hover(|s| s.bg(theme.border))
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.toggle_file_tree(cx);
                                     }))
                                     .child(
                                         Icon::new(IconName::FolderOpen)
                                             .small()
-                                            .text_color(if self.file_tree_visible {
-                                                rgb(0xcdd6f4)
-                                            } else {
-                                                rgb(0x6c7086)
-                                            })
+                                            .text_color(icon_color)
                                     )
                             )
                     )
