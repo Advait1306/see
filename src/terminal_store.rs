@@ -2,7 +2,6 @@ use crate::terminal::Terminal;
 use gpui::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -13,7 +12,7 @@ pub enum TerminalStoreEvent {
 }
 
 pub struct TerminalStore {
-    terminals: HashMap<String, Arc<parking_lot::Mutex<Terminal>>>,
+    terminals: HashMap<String, Entity<Terminal>>,
 }
 
 pub struct GlobalTerminalStore(pub Entity<TerminalStore>);
@@ -42,9 +41,8 @@ impl TerminalStore {
         &mut self,
         cwd: PathBuf,
         cx: &mut Context<Self>,
-    ) -> Option<(String, Arc<parking_lot::Mutex<Terminal>>)> {
-        let terminal = Terminal::new(cwd).ok()?;
-        let terminal = Arc::new(parking_lot::Mutex::new(terminal));
+    ) -> Option<(String, Entity<Terminal>)> {
+        let terminal = cx.new(|cx| Terminal::new(cwd, cx).expect("Failed to create terminal"));
         let id = Uuid::new_v4().to_string();
 
         self.terminals.insert(id.clone(), terminal.clone());
@@ -54,7 +52,7 @@ impl TerminalStore {
     }
 
     #[allow(dead_code)]
-    pub fn get_terminal(&self, id: &str) -> Option<Arc<parking_lot::Mutex<Terminal>>> {
+    pub fn get_terminal(&self, id: &str) -> Option<Entity<Terminal>> {
         self.terminals.get(id).cloned()
     }
 

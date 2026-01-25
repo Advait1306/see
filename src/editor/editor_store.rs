@@ -10,13 +10,8 @@ pub enum EditorStoreEvent {
     BufferOpened,
 }
 
-struct BufferEntry {
-    buffer: Entity<Buffer>,
-    ref_count: usize,
-}
-
 pub struct EditorStore {
-    buffers: HashMap<PathBuf, BufferEntry>,
+    buffers: HashMap<PathBuf, Entity<Buffer>>,
 }
 
 pub struct GlobalEditorStore(pub Entity<EditorStore>);
@@ -57,9 +52,8 @@ impl EditorStore {
     pub fn open_buffer(&mut self, path: PathBuf, cx: &mut Context<Self>) -> Option<Entity<Buffer>> {
         let canonical_path = path.canonicalize().unwrap_or(path.clone());
 
-        if let Some(entry) = self.buffers.get_mut(&canonical_path) {
-            entry.ref_count += 1;
-            return Some(entry.buffer.clone());
+        if let Some(buffer) = self.buffers.get(&canonical_path) {
+            return Some(buffer.clone());
         }
 
         let buffer = cx.new(|cx| {
@@ -68,21 +62,14 @@ impl EditorStore {
             })
         });
 
-        self.buffers.insert(
-            canonical_path.clone(),
-            BufferEntry {
-                buffer: buffer.clone(),
-                ref_count: 1,
-            },
-        );
+        self.buffers.insert(canonical_path.clone(), buffer.clone());
 
         cx.emit(EditorStoreEvent::BufferOpened);
         Some(buffer)
     }
 
     fn check_all_external_changes(&mut self, cx: &mut Context<Self>) {
-        for (_path, entry) in &self.buffers {
-            let buffer = entry.buffer.clone();
+        for (_path, buffer) in &self.buffers {
             let has_changes = buffer.read(cx).check_external_changes();
             let is_dirty = buffer.read(cx).is_dirty();
 

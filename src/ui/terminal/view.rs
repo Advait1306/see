@@ -4,7 +4,7 @@ use super::element::TerminalElement;
 use super::input::key_to_input;
 use crate::commands::{SendShiftTabToTerminal, SendTabToTerminal};
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, PADDING};
-use crate::terminal::Terminal;
+use crate::terminal::{Terminal, TerminalEvent, TerminalInner};
 use crate::types::{SelectionPhase, Tab, TabConfig, TerminalTabConfig};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as AlacPoint, Side};
@@ -13,7 +13,6 @@ use gpui::prelude::*;
 use gpui::*;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 /// Convert pixel position to grid point and side
 fn pixel_to_grid_point(
@@ -63,7 +62,8 @@ fn pixel_to_grid_point(
 }
 
 pub struct TerminalView {
-    terminal: Arc<parking_lot::Mutex<Terminal>>,
+    terminal: Entity<Terminal>,
+    inner: Arc<parking_lot::Mutex<TerminalInner>>,
     focus_handle: FocusHandle,
     scroll_accumulator: f32,
     selection_phase: SelectionPhase,
@@ -72,31 +72,19 @@ pub struct TerminalView {
 }
 
 impl TerminalView {
-    pub fn new(terminal: Arc<parking_lot::Mutex<Terminal>>, cx: &mut Context<Self>) -> Self {
-        let term = terminal.clone();
+    pub fn new(terminal: Entity<Terminal>, cx: &mut Context<Self>) -> Self {
+        let inner = terminal.read(cx).inner();
 
-        // Poll for terminal output every 30ms
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(30))
-                    .await;
-
-                let has_updates = term.lock().drain_events();
-
-                if has_updates {
-                    let _ = cx.update(|cx| {
-                        let _ = this.update(cx, |_, cx| {
-                            cx.notify();
-                        });
-                    });
-                }
+        cx.subscribe(&terminal, |_this, _terminal, event: &TerminalEvent, cx| {
+            match event {
+                TerminalEvent::ContentChanged => cx.notify(),
             }
         })
         .detach();
 
         Self {
             terminal,
+            inner,
             focus_handle: cx.focus_handle(),
             scroll_accumulator: 0.0,
             selection_phase: SelectionPhase::None,
@@ -106,12 +94,11 @@ impl TerminalView {
     }
 
     pub fn write(&self, input: &str) {
-        self.terminal.lock().write(input.as_bytes());
+        self.inner.lock().write(input.as_bytes());
     }
 
-    /// Get the working directory this terminal was started in
-    pub fn cwd(&self) -> PathBuf {
-        self.terminal.lock().working_directory().clone()
+    pub fn cwd(&self, cx: &App) -> PathBuf {
+        self.terminal.read(cx).cwd()
     }
 }
 
@@ -120,8 +107,7 @@ impl Render for TerminalView {
         let focus_handle = self.focus_handle.clone();
         let is_focused = focus_handle.is_focused(window);
 
-        // Extract terminal content for the element
-        let terminal = self.terminal.clone();
+        let inner = self.inner.clone();
 
         div()
             .id("terminal-wrapper")
@@ -138,7 +124,7 @@ impl Render for TerminalView {
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _window, cx| {
                 // Handle Cmd+C for copy
                 if event.keystroke.modifiers.platform && event.keystroke.key == "c" {
-                    if let Some(text) = this.terminal.lock().selection_to_string() {
+                    if let Some(text) = this.inner.lock().selection_to_string() {
                         cx.write_to_clipboard(ClipboardItem::new_string(text));
                     }
                     return;
@@ -148,18 +134,18 @@ impl Render for TerminalView {
                 if event.keystroke.modifiers.platform && event.keystroke.key == "v" {
                     if let Some(item) = cx.read_from_clipboard() {
                         if let Some(text) = item.text() {
-                            this.terminal.lock().write(text.as_bytes());
+                            this.inner.lock().write(text.as_bytes());
                             cx.notify();
                         }
                     }
                     return;
                 }
 
-                let terminal = this.terminal.lock();
-                let mode = terminal.mode();
+                let inner = this.inner.lock();
+                let mode = inner.mode();
                 let input = key_to_input(event, &mode);
                 if !input.is_empty() {
-                    terminal.write(input.as_bytes());
+                    inner.write(input.as_bytes());
                     cx.notify();
                 }
             }))
@@ -167,8 +153,8 @@ impl Render for TerminalView {
                 cx.focus_self(window);
 
                 let Some(bounds) = *this.content_bounds.lock() else { return };
-                let terminal = this.terminal.lock();
-                let (cols, rows, display_offset) = terminal.with_term(|term| {
+                let inner = this.inner.lock();
+                let (cols, rows, display_offset) = inner.with_term(|term| {
                     (term.grid().columns(), term.grid().screen_lines(), term.grid().display_offset())
                 });
 
@@ -190,15 +176,15 @@ impl Render for TerminalView {
 
                 // Shift+click extends selection
                 if selection_type == SelectionType::Simple && event.modifiers.shift {
-                    if terminal.has_selection() {
-                        terminal.update_selection(point, side);
+                    if inner.has_selection() {
+                        inner.update_selection(point, side);
                         this.selection_phase = SelectionPhase::Selecting;
                         cx.notify();
                         return;
                     }
                 }
 
-                terminal.start_selection(selection_type, point, side);
+                inner.start_selection(selection_type, point, side);
                 this.selection_phase = SelectionPhase::Selecting;
                 cx.notify();
             }))
@@ -213,7 +199,7 @@ impl Render for TerminalView {
                 let lines = (this.scroll_accumulator / CELL_HEIGHT) as i32;
                 if lines != 0 {
                     this.scroll_accumulator -= lines as f32 * CELL_HEIGHT;
-                    this.terminal.lock().scroll(lines);
+                    this.inner.lock().scroll(lines);
                     cx.notify();
                 }
             }))
@@ -227,8 +213,8 @@ impl Render for TerminalView {
                 }
 
                 let Some(bounds) = *this.content_bounds.lock() else { return };
-                let terminal = this.terminal.lock();
-                let (cols, rows, display_offset) = terminal.with_term(|term| {
+                let inner = this.inner.lock();
+                let (cols, rows, display_offset) = inner.with_term(|term| {
                     (term.grid().columns(), term.grid().screen_lines(), term.grid().display_offset())
                 });
 
@@ -240,7 +226,7 @@ impl Render for TerminalView {
                     display_offset,
                 );
 
-                terminal.update_selection(point, side);
+                inner.update_selection(point, side);
                 cx.notify();
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _event: &MouseUpEvent, _, cx| {
@@ -251,7 +237,7 @@ impl Render for TerminalView {
             }))
             .size_full()
             .child(TerminalElement {
-                terminal,
+                inner,
                 is_focused,
                 bounds_out: self.content_bounds.clone(),
                 last_size: self.last_size.clone(),
@@ -270,7 +256,7 @@ impl Tab for TerminalView {
         "Terminal".to_string()
     }
 
-    fn to_config(&self, _cx: &App) -> TabConfig {
-        TabConfig::Terminal(TerminalTabConfig { cwd: self.cwd() })
+    fn to_config(&self, cx: &App) -> TabConfig {
+        TabConfig::Terminal(TerminalTabConfig { cwd: self.cwd(cx) })
     }
 }

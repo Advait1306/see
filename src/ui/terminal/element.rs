@@ -4,7 +4,7 @@ use super::colors::ansi_to_hsla;
 use super::cursor::{CursorLayout, CursorShape, DisplayCursor};
 use super::text_batch::BatchedTextRun;
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, PADDING};
-use crate::terminal::Terminal;
+use crate::terminal::{TerminalEventListener, TerminalInner};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::Flags as CellFlags;
@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 /// Custom Element for efficient terminal rendering
 pub(crate) struct TerminalElement {
-    pub(crate) terminal: Arc<parking_lot::Mutex<Terminal>>,
+    pub(crate) inner: Arc<parking_lot::Mutex<TerminalInner>>,
     pub(crate) is_focused: bool,
     pub(crate) bounds_out: Arc<parking_lot::Mutex<Option<Bounds<Pixels>>>>,
     pub(crate) last_size: Arc<parking_lot::Mutex<Option<(u16, u16)>>>,
@@ -104,16 +104,16 @@ impl Element for TerminalElement {
             let mut last_size = self.last_size.lock();
             if *last_size != Some(new_size) {
                 *last_size = Some(new_size);
-                self.terminal.lock().resize(cols, rows, CELL_WIDTH as u16, CELL_HEIGHT as u16);
+                self.inner.lock().resize(cols, rows, CELL_WIDTH as u16, CELL_HEIGHT as u16);
             }
         }
 
-        let terminal = self.terminal.lock();
+        let inner = self.inner.lock();
         let mut text_runs: Vec<BatchedTextRun> = Vec::new();
         let mut cursor: Option<CursorLayout> = None;
         let mut selection_ranges: Vec<SelectionLineRange> = Vec::new();
 
-        terminal.with_term(|term| {
+        inner.with_term(|term| {
             let grid = term.grid();
             let cols = grid.columns();
             let content = term.renderable_content();
@@ -180,7 +180,7 @@ impl Element for TerminalElement {
 
             // Extract selection ranges from the terminal
             if let Some(ref selection) = term.selection {
-                if let Some(range) = selection.to_range(term) {
+                if let Some(range) = selection.to_range::<TerminalEventListener>(term) {
                     let start = range.start;
                     let end = range.end;
 
