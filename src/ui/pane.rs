@@ -1,6 +1,6 @@
 use crate::editor::Buffer;
 use crate::terminal::Terminal;
-use crate::ui::editor_view::EditorView;
+use crate::ui::EditorView;
 use crate::ui::TerminalView;
 use gpui::prelude::*;
 use gpui::*;

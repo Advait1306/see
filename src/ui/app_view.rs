@@ -1,6 +1,6 @@
 use crate::config::{self, AppState, WorkspaceConfig, MemberConfig};
 use crate::editor::BufferStore;
-use crate::ui::editor_view::EditorView;
+use crate::ui::EditorView;
 use crate::ui::file_tree::{FileTree, FileTreeEvent};
 use crate::ui::pane::{Pane, Axis, TabItem};
 use crate::ui::pane_group::{Member, PaneAxis, PaneGroup, PaneGroupEvent};

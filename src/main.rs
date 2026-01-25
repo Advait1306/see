@@ -3,6 +3,7 @@ mod constants;
 mod editor;
 mod file_watcher;
 mod terminal;
+mod types;
 mod ui;
 mod workspace;
 
