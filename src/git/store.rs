@@ -4,6 +4,7 @@ use gpui::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileStatus {
@@ -30,6 +31,7 @@ pub struct GitStore {
     changed_files: Vec<ChangedFile>,
     file_diffs: HashMap<PathBuf, Vec<DiffHunk>>,
     line_diffs: HashMap<PathBuf, Vec<LineDiff>>,
+    _poll_task: Option<Task<()>>,
 }
 
 impl EventEmitter<GitStoreEvent> for GitStore {}
@@ -53,9 +55,23 @@ impl GitStore {
             changed_files: Vec::new(),
             file_diffs: HashMap::new(),
             line_diffs: HashMap::new(),
+            _poll_task: None,
         };
 
         store.refresh_changed_files(cx);
+
+        // Start polling for git status changes
+        store._poll_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(1000))
+                    .await;
+                let _ = this.update(cx, |store, cx| {
+                    store.refresh_changed_files(cx);
+                });
+            }
+        }));
+
         store
     }
 
