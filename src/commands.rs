@@ -33,6 +33,12 @@ actions!(
     ]
 );
 
+// Diff carousel commands
+actions!(
+    august,
+    [PrevDiff, NextDiff,]
+);
+
 /// Register all application keybindings
 pub fn register_keybindings(cx: &mut App) {
     cx.bind_keys([
@@ -52,5 +58,8 @@ pub fn register_keybindings(cx: &mut App) {
         // Tab key handling (only when Terminal has focus)
         KeyBinding::new("tab", SendTabToTerminal, Some("Terminal")),
         KeyBinding::new("shift-tab", SendShiftTabToTerminal, Some("Terminal")),
+        // Diff carousel navigation
+        KeyBinding::new("j", PrevDiff, Some("DiffCarousel")),
+        KeyBinding::new("k", NextDiff, Some("DiffCarousel")),
     ]);
 }

@@ -1,5 +1,6 @@
 //! Diff carousel showing one file diff at a time with navigation
 
+use crate::commands::{NextDiff, PrevDiff};
 use crate::git::{ChangedFile, FileStatus, GitStore, GitStoreEvent};
 use crate::stores::{WindowStore, WindowStoreEvent};
 use crate::ui::editor::{DiffLine, DiffLineTag, EditorView};
@@ -253,7 +254,14 @@ impl Render for DiffList {
 
         div()
             .id("diff-carousel")
+            .key_context("DiffCarousel")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, _: &PrevDiff, _, cx| {
+                this.go_to_previous(cx);
+            }))
+            .on_action(cx.listener(|this, _: &NextDiff, _, cx| {
+                this.go_to_next(cx);
+            }))
             .size_full()
             .flex()
             .flex_col()
