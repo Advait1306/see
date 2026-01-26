@@ -211,12 +211,13 @@ impl FileTree {
             return;
         };
 
+        let git_store = workspace.read(cx).git_store().clone();
         let pane_store = workspace.read(cx).pane_store().clone();
         pane_store.update(cx, |ps, cx| {
             if let Some(pane) = ps.active_pane.clone() {
-                // TODO: (fix) add a speacial function to add editors. Currently views are being added as Entities, that shouldn't be the case.
                 pane.update(cx, |p, cx| {
-                    let editor_view = cx.new(|cx| EditorView::new(buffer, path, cx));
+                    let editor_view =
+                        cx.new(|cx| EditorView::new(buffer, path, git_store.clone(), cx));
                     p.tabs.push(TabItem::Editor(editor_view));
                     p.active_index = p.tabs.len() - 1;
                     cx.notify();

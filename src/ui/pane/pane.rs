@@ -136,12 +136,16 @@ impl Pane {
                     }
                     TabItem::Editor(editor) => {
                         let editor_view = editor.read(cx);
-                        let buffer = editor_view.buffer().read(cx);
-                        let name = buffer.file_name();
-                        if buffer.is_dirty() {
-                            format!("{}*", name)
+                        if let Some(buffer) = editor_view.buffer() {
+                            let buffer = buffer.read(cx);
+                            let name = buffer.file_name();
+                            if buffer.is_dirty() {
+                                format!("{}*", name)
+                            } else {
+                                name
+                            }
                         } else {
-                            name
+                            "Diff".to_string()
                         }
                     }
                 };

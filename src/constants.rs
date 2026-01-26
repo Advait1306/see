@@ -11,6 +11,9 @@ pub const CELL_HEIGHT: f32 = 18.0;
 /// Standard padding around content areas
 pub const PADDING: f32 = 8.0;
 
+/// Width of git diff gutter markers
+pub const GUTTER_MARKER_WIDTH: f32 = 3.0;
+
 /// ANSI 16-color palette for terminal
 /// Uses Catppuccin Mocha colors for terminal-specific rendering
 pub const ANSI_COLORS: [(u8, u8, u8); 16] = [

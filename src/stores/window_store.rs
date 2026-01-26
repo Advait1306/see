@@ -5,6 +5,14 @@ use crate::config;
 use crate::workspace::Workspace;
 use super::{WorkspaceStore, WorkspaceStoreEvent};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RightSidebarPanel {
+    #[default]
+    Hidden,
+    FileTree,
+    DiffList,
+}
+
 #[derive(Clone)]
 pub enum WindowStoreEvent {
     ActiveWorkspaceChanged,
@@ -15,14 +23,14 @@ pub enum WindowStoreEvent {
 pub struct WindowUiState {
     pub active_workspace_id: Option<String>,
     pub sidebar_collapsed: bool,
-    pub file_tree_visible: bool,
+    pub right_sidebar: RightSidebarPanel,
 }
 
 pub struct WindowStore {
     workspace_store: Entity<WorkspaceStore>,
     active_workspace_id: Option<String>,
     sidebar_collapsed: bool,
-    file_tree_visible: bool,
+    right_sidebar: RightSidebarPanel,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -57,7 +65,7 @@ impl WindowStore {
             workspace_store,
             active_workspace_id,
             sidebar_collapsed: ui_state.sidebar_collapsed,
-            file_tree_visible: ui_state.file_tree_visible,
+            right_sidebar: ui_state.right_sidebar,
             _subscriptions: vec![sub],
         }
     }
@@ -159,12 +167,25 @@ impl WindowStore {
         cx.notify();
     }
 
-    pub fn file_tree_visible(&self) -> bool {
-        self.file_tree_visible
+    pub fn right_sidebar(&self) -> RightSidebarPanel {
+        self.right_sidebar
     }
 
     pub fn toggle_file_tree(&mut self, cx: &mut Context<Self>) {
-        self.file_tree_visible = !self.file_tree_visible;
+        self.right_sidebar = match self.right_sidebar {
+            RightSidebarPanel::FileTree => RightSidebarPanel::Hidden,
+            _ => RightSidebarPanel::FileTree,
+        };
+        self.save();
+        cx.emit(WindowStoreEvent::UiStateChanged);
+        cx.notify();
+    }
+
+    pub fn toggle_diff_list(&mut self, cx: &mut Context<Self>) {
+        self.right_sidebar = match self.right_sidebar {
+            RightSidebarPanel::DiffList => RightSidebarPanel::Hidden,
+            _ => RightSidebarPanel::DiffList,
+        };
         self.save();
         cx.emit(WindowStoreEvent::UiStateChanged);
         cx.notify();
@@ -174,7 +195,7 @@ impl WindowStore {
         let state = WindowUiState {
             active_workspace_id: self.active_workspace_id.clone(),
             sidebar_collapsed: self.sidebar_collapsed,
-            file_tree_visible: self.file_tree_visible,
+            right_sidebar: self.right_sidebar,
         };
         config::save_json(&config::ui_state_path(), &state);
     }

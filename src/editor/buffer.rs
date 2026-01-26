@@ -1,3 +1,4 @@
+use crate::git::LineDiff;
 use gpui::prelude::*;
 use gpui::*;
 use ropey::Rope;
@@ -55,6 +56,7 @@ pub struct Buffer {
     is_dirty: bool,
     undo_stack: Vec<UndoOperation>,
     redo_stack: Vec<UndoOperation>,
+    line_diffs: Vec<LineDiff>,
 }
 
 impl EventEmitter<BufferEvent> for Buffer {}
@@ -73,6 +75,7 @@ impl Buffer {
             is_dirty: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            line_diffs: Vec::new(),
         })
     }
 
@@ -227,6 +230,7 @@ impl Buffer {
         // Clear undo/redo history on reload
         self.undo_stack.clear();
         self.redo_stack.clear();
+        self.line_diffs.clear();
         cx.emit(BufferEvent::Changed);
         cx.notify();
         Ok(())
@@ -337,5 +341,20 @@ impl Buffer {
     /// Get the total number of characters in the buffer
     pub fn total_chars(&self) -> usize {
         self.rope.len_chars()
+    }
+
+    /// Set line diffs from git diff computation
+    pub fn set_line_diffs(&mut self, diffs: Vec<LineDiff>) {
+        self.line_diffs = diffs;
+    }
+
+    /// Get the diff status for a specific line
+    pub fn line_diff(&self, line: usize) -> LineDiff {
+        self.line_diffs.get(line).copied().unwrap_or(LineDiff::Unchanged)
+    }
+
+    /// Get the full content as a string (for diff computation)
+    pub fn content(&self) -> String {
+        self.rope.to_string()
     }
 }

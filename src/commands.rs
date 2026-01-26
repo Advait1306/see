@@ -28,6 +28,7 @@ actions!(
     [
         ToggleWorkspaceSidebar, // Left sidebar (workspaces)
         ToggleFileTree,         // Right sidebar (file system)
+        ToggleDiffList,         // Right sidebar (git diff)
         Quit,
     ]
 );
@@ -46,7 +47,8 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-alt-]", NextWorkspace, None),
         // UI toggles
         KeyBinding::new("cmd-b", ToggleWorkspaceSidebar, None), // Left sidebar
-        KeyBinding::new("cmd-l", ToggleFileTree, None),         // Right sidebar
+        KeyBinding::new("cmd-l", ToggleFileTree, None),         // Right sidebar (files)
+        KeyBinding::new("cmd-g", ToggleDiffList, None),         // Right sidebar (git)
         // Tab key handling (only when Terminal has focus)
         KeyBinding::new("tab", SendTabToTerminal, Some("Terminal")),
         KeyBinding::new("shift-tab", SendShiftTabToTerminal, Some("Terminal")),

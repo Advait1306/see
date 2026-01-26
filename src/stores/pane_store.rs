@@ -18,6 +18,7 @@
 //! is collapsed to simplify the tree.
 
 use crate::config;
+use crate::git::GitStore;
 use crate::stores::EditorStore;
 use crate::stores::TerminalStore;
 use crate::types::TabConfig;
@@ -211,12 +212,14 @@ impl PaneStore {
         workspace_id: String,
         workspace_path: PathBuf,
         buffer_store: Entity<EditorStore>,
+        git_store: Entity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let layout_path = config::layout_path(&workspace_id);
         let layout: LayoutNode = config::load_json(&layout_path);
 
-        let member = Self::create_member_from_layout(&layout, &workspace_path, &buffer_store, cx);
+        let member =
+            Self::create_member_from_layout(&layout, &workspace_path, &buffer_store, &git_store, cx);
         let active_pane = member.first_pane();
         let mut store = Self::with_root(workspace_id, member, cx);
         store.active_pane = active_pane;
@@ -237,10 +240,12 @@ impl PaneStore {
         layout: &LayoutNode,
         path: &PathBuf,
         buffer_store: &Entity<EditorStore>,
+        git_store: &Entity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Member {
         match layout {
             LayoutNode::Pane(pane_config) => {
+                let git_store = git_store.clone();
                 let pane = cx.new(|cx| {
                     let mut pane = Pane::new(path.clone(), cx);
 
@@ -268,7 +273,12 @@ impl PaneStore {
                                         store.open_buffer(editor_config.path.clone(), cx)
                                     }) {
                                         let editor = cx.new(|cx| {
-                                            EditorView::new(buffer, editor_config.path.clone(), cx)
+                                            EditorView::new(
+                                                buffer,
+                                                editor_config.path.clone(),
+                                                git_store.clone(),
+                                                cx,
+                                            )
                                         });
                                         pane.tabs.push(TabItem::Editor(editor));
                                     }
@@ -295,7 +305,9 @@ impl PaneStore {
             } => {
                 let members: Vec<Member> = children
                     .iter()
-                    .map(|child| Self::create_member_from_layout(child, path, buffer_store, cx))
+                    .map(|child| {
+                        Self::create_member_from_layout(child, path, buffer_store, git_store, cx)
+                    })
                     .collect();
 
                 Member::Axis(PaneAxis {

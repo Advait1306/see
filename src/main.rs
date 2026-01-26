@@ -3,6 +3,7 @@ mod config;
 mod constants;
 mod editor;
 mod file_watcher;
+mod git;
 mod stores;
 mod terminal;
 mod types;
@@ -63,7 +64,7 @@ fn main() {
 
                 let window_view = cx.new(|cx| {
                     let window_view =
-                        WindowView::new(workspace_store.clone(), window_store.clone(), cx);
+                        WindowView::new(workspace_store.clone(), window_store.clone(), window, cx);
 
                     // Ensure at least one workspace exists
                     if window_view.workspace_store().read(cx).is_empty() {

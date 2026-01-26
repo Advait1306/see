@@ -1,6 +1,7 @@
 use crate::commands::*;
 use crate::config;
-use crate::stores::{PaneStore, WindowStore, WorkspaceStore};
+use crate::stores::{PaneStore, RightSidebarPanel, WindowStore, WorkspaceStore};
+use crate::ui::diff_list::DiffList;
 use crate::ui::file_tree::FileTree;
 use crate::ui::pane_group::PaneGroupView;
 use crate::ui::workspace_sidebar::WorkspaceSidebar;
@@ -15,6 +16,7 @@ pub struct WindowView {
     window_store: Entity<WindowStore>,
     workspace_sidebar: Entity<WorkspaceSidebar>,
     file_tree: Entity<FileTree>,
+    diff_list: Entity<DiffList>,
     focus_handle: FocusHandle,
 }
 
@@ -22,17 +24,20 @@ impl WindowView {
     pub fn new(
         workspace_store: Entity<WorkspaceStore>,
         window_store: Entity<WindowStore>,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let workspace_sidebar =
             cx.new(|cx| WorkspaceSidebar::new(workspace_store.clone(), window_store.clone(), cx));
         let file_tree = cx.new(|cx| FileTree::new(window_store.clone(), cx));
+        let diff_list = cx.new(|cx| DiffList::new(window_store.clone(), cx));
 
         Self {
             workspace_store,
             window_store,
             workspace_sidebar,
             file_tree,
+            diff_list,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -61,32 +66,47 @@ impl WindowView {
         });
     }
 
+    pub fn toggle_diff_list(&mut self, cx: &mut Context<Self>) {
+        self.window_store.update(cx, |store, cx| {
+            store.toggle_diff_list(cx);
+        });
+    }
+
     pub fn toggle_workspace_sidebar(&mut self, cx: &mut Context<Self>) {
         self.window_store.update(cx, |store, cx| {
             store.toggle_sidebar(cx);
         });
     }
 
-    fn file_tree_visible(&self, cx: &App) -> bool {
-        self.window_store.read(cx).file_tree_visible()
+    fn right_sidebar(&self, cx: &App) -> RightSidebarPanel {
+        self.window_store.read(cx).right_sidebar()
     }
 
     fn sidebar_collapsed(&self, cx: &App) -> bool {
         self.window_store.read(cx).sidebar_collapsed()
     }
 
-    fn render_file_tree_sidebar(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_right_sidebar(&self, panel: RightSidebarPanel, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
+        let width = match panel {
+            RightSidebarPanel::DiffList => 500.0,
+            _ => 250.0,
+        };
+
         div()
-            .id("file-tree-sidebar")
-            .w(px(250.0))
+            .id("right-sidebar")
+            .w(px(width))
             .h_full()
             .flex_shrink_0()
             .border_l_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
-            .child(self.file_tree.clone())
+            .map(|el| match panel {
+                RightSidebarPanel::FileTree => el.child(self.file_tree.clone()),
+                RightSidebarPanel::DiffList => el.child(self.diff_list.clone()),
+                RightSidebarPanel::Hidden => el,
+            })
     }
 
     // =========================================================================
@@ -139,12 +159,17 @@ const TITLE_BAR_HEIGHT: f32 = 38.0;
 impl Render for WindowView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let pane_group_view = self.active_pane_group_view(cx);
-        let file_tree_visible = self.file_tree_visible(cx);
+        let right_sidebar = self.right_sidebar(cx);
         let sidebar_collapsed = self.sidebar_collapsed(cx);
 
         let focus_handle = self.focus_handle.clone();
         let theme = cx.theme();
-        let icon_color = if file_tree_visible {
+        let file_tree_icon_color = if right_sidebar == RightSidebarPanel::FileTree {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        };
+        let diff_list_icon_color = if right_sidebar == RightSidebarPanel::DiffList {
             theme.foreground
         } else {
             theme.muted_foreground
@@ -180,6 +205,9 @@ impl Render for WindowView {
             .on_action(cx.listener(|this, _: &ToggleFileTree, _window, cx| {
                 this.toggle_file_tree(cx);
             }))
+            .on_action(cx.listener(|this, _: &ToggleDiffList, _window, cx| {
+                this.toggle_diff_list(cx);
+            }))
             .size_full()
             .flex()
             .flex_col()
@@ -206,22 +234,44 @@ impl Render for WindowView {
                             .child(config::APP_NAME),
                     )
                     .child(
-                        div().w(px(80.0)).flex().justify_end().pr(px(12.0)).child(
-                            div()
-                                .id("file-tree-toggle")
-                                .p(px(6.0))
-                                .rounded(px(4.0))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(theme.border))
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.toggle_file_tree(cx);
-                                }))
-                                .child(
-                                    Icon::new(IconName::FolderOpen)
-                                        .small()
-                                        .text_color(icon_color),
-                                ),
-                        ),
+                        div()
+                            .w(px(100.0))
+                            .flex()
+                            .justify_end()
+                            .gap(px(4.0))
+                            .pr(px(12.0))
+                            .child(
+                                div()
+                                    .id("diff-list-toggle")
+                                    .p(px(6.0))
+                                    .rounded(px(4.0))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme.border))
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.toggle_diff_list(cx);
+                                    }))
+                                    .child(
+                                        Icon::new(IconName::Asterisk)
+                                            .small()
+                                            .text_color(diff_list_icon_color),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("file-tree-toggle")
+                                    .p(px(6.0))
+                                    .rounded(px(4.0))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme.border))
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.toggle_file_tree(cx);
+                                    }))
+                                    .child(
+                                        Icon::new(IconName::FolderOpen)
+                                            .small()
+                                            .text_color(file_tree_icon_color),
+                                    ),
+                            ),
                     ),
             )
             // Main content area
@@ -262,8 +312,8 @@ impl Render for WindowView {
                                     }),
                             ),
                     )
-                    .when(file_tree_visible, |el| {
-                        el.child(self.render_file_tree_sidebar(cx))
+                    .when(right_sidebar != RightSidebarPanel::Hidden, |el| {
+                        el.child(self.render_right_sidebar(right_sidebar, cx))
                     }),
             )
     }
