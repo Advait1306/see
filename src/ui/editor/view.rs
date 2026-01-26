@@ -128,6 +128,7 @@ impl EditorView {
     }
 
     /// Create an editor in diff mode (read-only, shows unified diff)
+    /// The editor will fill available space and virtualize content internally.
     pub fn new_diff_mode(diff_lines: Vec<DiffLine>, cx: &mut Context<Self>) -> Self {
         let max_old = diff_lines
             .iter()
@@ -187,6 +188,7 @@ impl EditorView {
         self.diff_mode.is_some()
     }
 
+    #[allow(dead_code)]
     pub fn diff_line_count(&self) -> usize {
         self.diff_mode
             .as_ref()
@@ -460,6 +462,8 @@ impl Render for EditorView {
                     (30, 80.0 * CELL_WIDTH) // Fallback defaults
                 };
 
+                let max_scroll_offset = line_count.saturating_sub(visible_lines);
+
                 // Horizontal scrolling (pixel-based, smooth)
                 if h_delta.abs() > 0.1 {
                     this.scroll_x -= h_delta;
@@ -486,7 +490,6 @@ impl Render for EditorView {
                         this.scroll_offset = this.scroll_offset.saturating_sub(lines as usize);
                     }
                     // Limit so last line reaches bottom (not top)
-                    let max_scroll_offset = line_count.saturating_sub(visible_lines);
                     if this.scroll_offset > max_scroll_offset {
                         this.scroll_offset = max_scroll_offset;
                     }

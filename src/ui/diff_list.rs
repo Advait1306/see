@@ -1,6 +1,5 @@
-//! Diff list sidebar showing changed files with unified diffs
+//! Diff carousel showing one file diff at a time with navigation
 
-use crate::constants::{CELL_HEIGHT, PADDING};
 use crate::git::{ChangedFile, FileStatus, GitStore, GitStoreEvent};
 use crate::stores::{WindowStore, WindowStoreEvent};
 use crate::ui::editor::{DiffLine, DiffLineTag, EditorView};
@@ -8,39 +7,28 @@ use crate::workspace::{Workspace, WorkspaceEvent};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;
-use gpui_component::{v_virtual_list, VirtualListScrollHandle};
 use gpui_component::{Icon, IconName, Sizable};
 use similar::{ChangeTag, TextDiff};
-use std::collections::HashSet;
 use std::path::PathBuf;
-use std::rc::Rc;
 
-const FILE_HEADER_HEIGHT: f32 = 28.0;
+const HEADER_HEIGHT: f32 = 32.0;
 
 struct FileDiffData {
+    #[allow(dead_code)]
     path: PathBuf,
     status: FileStatus,
     display_name: String,
     diff_lines: Vec<DiffLine>,
 }
 
-/// Entry in the virtualized list
-enum ListEntry {
-    FileHeader { file_index: usize },
-    DiffEditor { file_index: usize },
-}
-
 pub struct DiffList {
     window_store: Entity<WindowStore>,
     focus_handle: FocusHandle,
-    collapsed_files: HashSet<PathBuf>,
     file_diffs: Vec<FileDiffData>,
-    diff_editors: Vec<(PathBuf, Entity<EditorView>)>,
-    /// Flattened list of entries for virtualization
-    list_entries: Vec<ListEntry>,
-    /// Pre-computed sizes for each entry
-    item_sizes: Rc<Vec<Size<Pixels>>>,
-    scroll_handle: VirtualListScrollHandle,
+    /// Current file index in the carousel
+    current_index: usize,
+    /// Editor for the current file
+    current_editor: Option<Entity<EditorView>>,
     _window_store_subscription: Subscription,
     _git_store_subscription: Option<Subscription>,
     _workspace_subscription: Option<Subscription>,
@@ -59,12 +47,9 @@ impl DiffList {
         let mut diff_list = Self {
             window_store,
             focus_handle: cx.focus_handle(),
-            collapsed_files: HashSet::new(),
             file_diffs: Vec::new(),
-            diff_editors: Vec::new(),
-            list_entries: Vec::new(),
-            item_sizes: Rc::new(Vec::new()),
-            scroll_handle: VirtualListScrollHandle::new(),
+            current_index: 0,
+            current_editor: None,
             _window_store_subscription: window_store_sub,
             _git_store_subscription: None,
             _workspace_subscription: None,
@@ -108,8 +93,8 @@ impl DiffList {
     fn refresh_diffs(&mut self, cx: &mut Context<Self>) {
         let Some(git_store) = self.active_git_store(cx) else {
             self.file_diffs.clear();
-            self.diff_editors.clear();
-            self.rebuild_list_entries(cx);
+            self.current_index = 0;
+            self.current_editor = None;
             cx.notify();
             return;
         };
@@ -136,8 +121,12 @@ impl DiffList {
             });
         }
 
-        self.rebuild_diff_editors(cx);
-        self.rebuild_list_entries(cx);
+        // Reset index if out of bounds
+        if self.current_index >= self.file_diffs.len() {
+            self.current_index = self.file_diffs.len().saturating_sub(1);
+        }
+
+        self.rebuild_current_editor(cx);
         cx.notify();
     }
 
@@ -205,75 +194,34 @@ impl DiffList {
         all_lines
     }
 
-    fn rebuild_diff_editors(&mut self, cx: &mut Context<Self>) {
-        self.diff_editors.clear();
-
-        for file_diff in &self.file_diffs {
-            if !self.collapsed_files.contains(&file_diff.path) {
-                let diff_lines = file_diff.diff_lines.clone();
-                let editor = cx.new(|cx| EditorView::new_diff_mode(diff_lines, cx));
-                self.diff_editors.push((file_diff.path.clone(), editor));
-            }
-        }
-    }
-
-    fn rebuild_list_entries(&mut self, cx: &mut Context<Self>) {
-        self.list_entries.clear();
-        let mut sizes = Vec::new();
-
-        for (file_index, file_diff) in self.file_diffs.iter().enumerate() {
-            // Always add file header
-            self.list_entries.push(ListEntry::FileHeader { file_index });
-            sizes.push(Size {
-                width: px(0.0), // Width is ignored for vertical lists
-                height: px(FILE_HEADER_HEIGHT),
-            });
-
-            // Add diff editor if expanded
-            if !self.collapsed_files.contains(&file_diff.path) {
-                self.list_entries.push(ListEntry::DiffEditor { file_index });
-
-                // Calculate editor height based on line count
-                let editor_height = if let Some(editor) = self.get_editor_for_path(&file_diff.path)
-                {
-                    let line_count = editor.read(cx).diff_line_count();
-                    (line_count as f32 * CELL_HEIGHT) + (PADDING * 2.0)
-                } else {
-                    100.0 // Fallback height
-                };
-
-                sizes.push(Size {
-                    width: px(0.0),
-                    height: px(editor_height),
-                });
-            }
-        }
-
-        self.item_sizes = Rc::new(sizes);
-    }
-
-    fn toggle_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.collapsed_files.contains(&path) {
-            self.collapsed_files.remove(&path);
+    fn rebuild_current_editor(&mut self, cx: &mut Context<Self>) {
+        if let Some(file_diff) = self.file_diffs.get(self.current_index) {
+            let diff_lines = file_diff.diff_lines.clone();
+            self.current_editor = Some(cx.new(|cx| EditorView::new_diff_mode(diff_lines, cx)));
         } else {
-            self.collapsed_files.insert(path);
+            self.current_editor = None;
         }
-        self.rebuild_diff_editors(cx);
-        self.rebuild_list_entries(cx);
-        cx.notify();
     }
 
-    fn get_editor_for_path(&self, path: &PathBuf) -> Option<&Entity<EditorView>> {
-        self.diff_editors
-            .iter()
-            .find(|(p, _)| p == path)
-            .map(|(_, e)| e)
+    fn go_to_previous(&mut self, cx: &mut Context<Self>) {
+        if self.current_index > 0 {
+            self.current_index -= 1;
+            self.rebuild_current_editor(cx);
+            cx.notify();
+        }
+    }
+
+    fn go_to_next(&mut self, cx: &mut Context<Self>) {
+        if self.current_index + 1 < self.file_diffs.len() {
+            self.current_index += 1;
+            self.rebuild_current_editor(cx);
+            cx.notify();
+        }
     }
 
     fn total_changes(&self) -> usize {
         self.file_diffs.len()
     }
-
 }
 
 impl Render for DiffList {
@@ -283,143 +231,150 @@ impl Render for DiffList {
         let foreground_color = theme.foreground;
         let border_color = theme.border;
         let muted_color = theme.muted_foreground;
-        let list_hover = theme.list_hover;
         let success_color = theme.success;
         let warning_color = theme.warning;
         let danger_color = theme.danger;
 
-        let total_changes = self.total_changes();
-        let item_sizes = self.item_sizes.clone();
-        let scroll_handle = self.scroll_handle.clone();
+        let total = self.total_changes();
+        let current = self.current_index;
+        let has_prev = current > 0;
+        let has_next = current + 1 < total;
+
+        // Get current file info
+        let current_file = self.file_diffs.get(current);
+        let display_name = current_file
+            .map(|f| f.display_name.clone())
+            .unwrap_or_default();
+        let status_color = current_file.map(|f| match f.status {
+            FileStatus::Added => success_color,
+            FileStatus::Modified => warning_color,
+            FileStatus::Deleted => danger_color,
+        });
 
         div()
-            .id("diff-list")
+            .id("diff-carousel")
             .track_focus(&self.focus_handle)
             .size_full()
             .flex()
             .flex_col()
             .bg(sidebar_color)
+            // Header with navigation
             .child(
                 div()
-                    .h(px(32.0))
+                    .h(px(HEADER_HEIGHT))
                     .w_full()
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
-                    .px(px(12.0))
+                    .justify_between()
+                    .px(px(8.0))
                     .border_b_1()
                     .border_color(border_color)
                     .child(
+                        // Left: prev button
                         div()
-                            .text_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(foreground_color)
-                            .child(format!("Changes {}", total_changes)),
+                            .id("diff-prev-btn")
+                            .w(px(24.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(has_prev, |el| {
+                                el.cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.go_to_previous(cx);
+                                    }))
+                            })
+                            .child(
+                                Icon::new(IconName::ChevronLeft)
+                                    .xsmall()
+                                    .text_color(if has_prev {
+                                        foreground_color
+                                    } else {
+                                        muted_color.opacity(0.3)
+                                    }),
+                            ),
+                    )
+                    .child(
+                        // Center: file name and status
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .gap(px(6.0))
+                            .overflow_hidden()
+                            .when_some(status_color, |el, color| {
+                                el.child(
+                                    div()
+                                        .w(px(8.0))
+                                        .h(px(8.0))
+                                        .rounded_full()
+                                        .bg(color),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(foreground_color)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(display_name),
+                            )
+                            .when(total > 1, |el| {
+                                el.child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(muted_color)
+                                        .child(format!("({}/{})", current + 1, total)),
+                                )
+                            }),
+                    )
+                    .child(
+                        // Right: next button
+                        div()
+                            .id("diff-next-btn")
+                            .w(px(24.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(has_next, |el| {
+                                el.cursor_pointer()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.go_to_next(cx);
+                                    }))
+                            })
+                            .child(
+                                Icon::new(IconName::ChevronRight)
+                                    .xsmall()
+                                    .text_color(if has_next {
+                                        foreground_color
+                                    } else {
+                                        muted_color.opacity(0.3)
+                                    }),
+                            ),
                     ),
             )
+            // Editor area - fills remaining space
             .child(
                 div()
                     .flex_1()
-                    .size_full()
-                    .overflow_hidden()
-                    .child(
-                        v_virtual_list(
-                            cx.entity().clone(),
-                            "diff-virtual-list",
-                            item_sizes,
-                            move |this, visible_range, _window, cx| {
-                                let mut elements: Vec<AnyElement> = Vec::new();
-
-                                for ix in visible_range {
-                                    let Some(entry) = this.list_entries.get(ix) else {
-                                        continue;
-                                    };
-
-                                    let element = match entry {
-                                        ListEntry::FileHeader { file_index } => {
-                                            let file_diff = &this.file_diffs[*file_index];
-                                            let path = file_diff.path.clone();
-                                            let is_expanded = !this.collapsed_files.contains(&path);
-                                            let status = file_diff.status;
-                                            let display_name = file_diff.display_name.clone();
-
-                                            let status_color = match status {
-                                                FileStatus::Added => success_color,
-                                                FileStatus::Modified => warning_color,
-                                                FileStatus::Deleted => danger_color,
-                                            };
-
-                                            let chevron_icon = if is_expanded {
-                                                IconName::ChevronDown
-                                            } else {
-                                                IconName::ChevronRight
-                                            };
-
-                                            div()
-                                                .id(SharedString::from(format!("file-header-{}", path.display())))
-                                                .h(px(FILE_HEADER_HEIGHT))
-                                                .w_full()
-                                                .flex()
-                                                .items_center()
-                                                .gap(px(4.0))
-                                                .px(px(8.0))
-                                                .bg(sidebar_color)
-                                                .border_b_1()
-                                                .border_color(border_color)
-                                                .cursor_pointer()
-                                                .hover(move |s| s.bg(list_hover))
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.toggle_file(path.clone(), cx);
-                                                }))
-                                                .child(
-                                                    div()
-                                                        .w(px(16.0))
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_center()
-                                                        .child(Icon::new(chevron_icon).xsmall().text_color(muted_color)),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .w(px(8.0))
-                                                        .h(px(8.0))
-                                                        .rounded_full()
-                                                        .bg(status_color),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(foreground_color)
-                                                        .overflow_hidden()
-                                                        .text_ellipsis()
-                                                        .child(display_name),
-                                                )
-                                                .into_any_element()
-                                        }
-                                        ListEntry::DiffEditor { file_index } => {
-                                            let file_diff = &this.file_diffs[*file_index];
-
-                                            if let Some(editor) = this.get_editor_for_path(&file_diff.path) {
-                                                div()
-                                                    .w_full()
-                                                    .border_b_1()
-                                                    .border_color(border_color)
-                                                    .child(editor.clone())
-                                                    .into_any_element()
-                                            } else {
-                                                div().into_any_element()
-                                            }
-                                        }
-                                    };
-
-                                    elements.push(element);
-                                }
-
-                                elements
-                            },
-                        )
-                        .track_scroll(&scroll_handle),
-                    ),
+                    .min_h_0()
+                    .w_full()
+                    .when_some(self.current_editor.clone(), |el, editor| {
+                        el.child(editor)
+                    })
+                    .when(self.current_editor.is_none(), |el| {
+                        el.flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(muted_color)
+                                    .child("No changes"),
+                            )
+                    }),
             )
     }
 }

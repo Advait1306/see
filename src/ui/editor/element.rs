@@ -112,15 +112,8 @@ impl Element for EditorElement {
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-
-        // In diff mode, size height based on content
-        if let Some(ref diff_data) = self.view.read(cx).diff_mode {
-            let line_count = diff_data.display_lines.len();
-            let content_height = (line_count as f32 * CELL_HEIGHT) + (PADDING * 2.0);
-            style.size.height = px(content_height).into();
-        } else {
-            style.size.height = relative(1.).into();
-        }
+        // Both normal and diff mode fill available height - content is virtualized internally
+        style.size.height = relative(1.).into();
 
         let layout_id = window.request_layout(style, None, cx);
         (layout_id, ())
