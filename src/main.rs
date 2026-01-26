@@ -1,3 +1,4 @@
+mod assets;
 mod commands;
 mod config;
 mod constants;
@@ -10,10 +11,10 @@ mod types;
 mod ui;
 mod workspace;
 
+use assets::Assets;
 use commands::Quit;
 use gpui::*;
 use gpui_component::Root;
-use gpui_component_assets::Assets;
 use std::borrow::Cow;
 use stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
 use ui::WindowView;

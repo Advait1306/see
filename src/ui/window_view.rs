@@ -251,7 +251,8 @@ impl Render for WindowView {
                                         this.toggle_diff_list(cx);
                                     }))
                                     .child(
-                                        Icon::new(IconName::Asterisk)
+                                        Icon::default()
+                                            .path("icons/file-diff.svg")
                                             .small()
                                             .text_color(diff_list_icon_color),
                                     ),
