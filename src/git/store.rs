@@ -85,7 +85,7 @@ impl GitStore {
             .recurse_untracked_dirs(true)
             .include_ignored(false);
 
-        self.changed_files.clear();
+        let mut new_files = Vec::new();
 
         if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
             for entry in statuses.iter() {
@@ -111,7 +111,7 @@ impl GitStore {
                         PathBuf::from(path)
                     };
 
-                    self.changed_files.push(ChangedFile {
+                    new_files.push(ChangedFile {
                         path: full_path,
                         status: file_status,
                     });
@@ -119,8 +119,19 @@ impl GitStore {
             }
         }
 
-        cx.emit(GitStoreEvent::ChangedFilesUpdated);
-        cx.notify();
+        // Only update and emit event if the file list changed
+        let files_changed = self.changed_files.len() != new_files.len()
+            || self
+                .changed_files
+                .iter()
+                .zip(new_files.iter())
+                .any(|(old, new)| old.path != new.path || old.status != new.status);
+
+        if files_changed {
+            self.changed_files = new_files;
+            cx.emit(GitStoreEvent::ChangedFilesUpdated);
+            cx.notify();
+        }
     }
 
     pub fn compute_diff_for_file(

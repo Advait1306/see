@@ -30,6 +30,8 @@ pub struct DiffList {
     current_index: usize,
     /// Editor for the current file
     current_editor: Option<Entity<EditorView>>,
+    /// Path of the file currently being displayed (for scroll preservation)
+    current_editor_path: Option<PathBuf>,
     _window_store_subscription: Subscription,
     _git_store_subscription: Option<Subscription>,
     _workspace_subscription: Option<Subscription>,
@@ -51,6 +53,7 @@ impl DiffList {
             file_diffs: Vec::new(),
             current_index: 0,
             current_editor: None,
+            current_editor_path: None,
             _window_store_subscription: window_store_sub,
             _git_store_subscription: None,
             _workspace_subscription: None,
@@ -96,6 +99,7 @@ impl DiffList {
             self.file_diffs.clear();
             self.current_index = 0;
             self.current_editor = None;
+            self.current_editor_path = None;
             cx.notify();
             return;
         };
@@ -197,10 +201,31 @@ impl DiffList {
 
     fn rebuild_current_editor(&mut self, cx: &mut Context<Self>) {
         if let Some(file_diff) = self.file_diffs.get(self.current_index) {
+            let new_path = file_diff.path.clone();
             let diff_lines = file_diff.diff_lines.clone();
-            self.current_editor = Some(cx.new(|cx| EditorView::new_diff_mode(diff_lines, cx)));
+
+            // Preserve scroll position if showing the same file
+            let preserved_scroll = if self.current_editor_path.as_ref() == Some(&new_path) {
+                self.current_editor
+                    .as_ref()
+                    .map(|e| e.read(cx).scroll_offset)
+            } else {
+                None
+            };
+
+            let editor = cx.new(|cx| {
+                let mut editor = EditorView::new_diff_mode(diff_lines, cx);
+                if let Some(scroll_offset) = preserved_scroll {
+                    editor.scroll_offset = scroll_offset;
+                }
+                editor
+            });
+
+            self.current_editor = Some(editor);
+            self.current_editor_path = Some(new_path);
         } else {
             self.current_editor = None;
+            self.current_editor_path = None;
         }
     }
 
