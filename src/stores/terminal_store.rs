@@ -5,10 +5,8 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum TerminalStoreEvent {
-    TerminalCreated(String),
-    TerminalClosed(String),
+    TerminalCreated,
 }
 
 pub struct TerminalStore {
@@ -46,24 +44,9 @@ impl TerminalStore {
         let id = Uuid::new_v4().to_string();
 
         self.terminals.insert(id.clone(), terminal.clone());
-        cx.emit(TerminalStoreEvent::TerminalCreated(id.clone()));
+        cx.emit(TerminalStoreEvent::TerminalCreated);
 
         Some((id, terminal))
-    }
-
-    #[allow(dead_code)]
-    pub fn get_terminal(&self, id: &str) -> Option<Entity<Terminal>> {
-        self.terminals.get(id).cloned()
-    }
-
-    #[allow(dead_code)]
-    pub fn remove_terminal(&mut self, id: &str, cx: &mut Context<Self>) -> bool {
-        if self.terminals.remove(id).is_some() {
-            cx.emit(TerminalStoreEvent::TerminalClosed(id.to_string()));
-            true
-        } else {
-            false
-        }
     }
 }
 

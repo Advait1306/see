@@ -37,7 +37,7 @@ impl EventEmitter<FileTreeStoreEvent> for FileTreeStore {}
 
 impl FileTreeStore {
     pub fn new(workspace_id: String, workspace_path: PathBuf, cx: &mut Context<Self>) -> Self {
-        let mut store = Self::load_with_migration(&workspace_id, &workspace_path);
+        let mut store = Self::load(&workspace_id, &workspace_path);
 
         // Ensure root is expanded
         store.expanded_paths.insert(workspace_path.clone());
@@ -74,60 +74,9 @@ impl FileTreeStore {
         store
     }
 
-    fn load_with_migration(workspace_id: &str, workspace_path: &PathBuf) -> Self {
-        // Try to load from new per-workspace format first
+    fn load(workspace_id: &str, workspace_path: &PathBuf) -> Self {
         let config_path = config::workspace_file_tree_path(workspace_id);
         let config: FileTreeStateConfig = config::load_json(&config_path);
-
-        // If new format is empty but legacy global file-tree-state.json exists, migrate
-        if config.expanded_paths.is_empty() {
-            let global_path = config::file_tree_state_path();
-            if global_path.exists() {
-                log::info!(
-                    "Migrating file tree state for workspace {} from global file-tree-state.json",
-                    workspace_id
-                );
-                #[derive(Deserialize, Default)]
-                struct GlobalFileTreeConfig {
-                    expanded_paths_by_workspace:
-                        std::collections::HashMap<String, HashSet<PathBuf>>,
-                }
-                let global_config: GlobalFileTreeConfig = config::load_json(&global_path);
-                if let Some(expanded_paths) =
-                    global_config.expanded_paths_by_workspace.get(workspace_id)
-                {
-                    let store = Self {
-                        workspace_id: workspace_id.to_string(),
-                        workspace_path: workspace_path.clone(),
-                        expanded_paths: expanded_paths.clone(),
-                        entries: Vec::new(),
-                        watcher: None,
-                    };
-                    store.save();
-                    return store;
-                }
-            }
-
-            // Also check legacy state.json for migration
-            if config::legacy_state_exists() {
-                log::info!(
-                    "Migrating file tree state for workspace {} from legacy state.json",
-                    workspace_id
-                );
-                let legacy = config::load_state();
-                if let Some(ws_config) = legacy.workspaces.iter().find(|w| w.id == workspace_id) {
-                    let store = Self {
-                        workspace_id: workspace_id.to_string(),
-                        workspace_path: workspace_path.clone(),
-                        expanded_paths: ws_config.expanded_paths.clone(),
-                        entries: Vec::new(),
-                        watcher: None,
-                    };
-                    store.save();
-                    return store;
-                }
-            }
-        }
 
         Self {
             workspace_id: workspace_id.to_string(),
@@ -191,16 +140,7 @@ impl FileTreeStore {
             return entries;
         };
 
-        let mut items: Vec<_> = read_dir
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                let name = entry.file_name().to_string_lossy().to_string();
-                !name.starts_with('.')
-                    && name != "node_modules"
-                    && name != "target"
-                    && name != "__pycache__"
-            })
-            .collect();
+        let mut items: Vec<_> = read_dir.filter_map(|entry| entry.ok()).collect();
 
         items.sort_by(|a, b| {
             let a_is_dir = a.file_type().map(|t| t.is_dir()).unwrap_or(false);

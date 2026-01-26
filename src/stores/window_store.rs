@@ -88,11 +88,6 @@ impl WindowStore {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn workspace_store(&self) -> &Entity<WorkspaceStore> {
-        &self.workspace_store
-    }
-
     pub fn active_workspace_id(&self) -> Option<&String> {
         self.active_workspace_id.as_ref()
     }

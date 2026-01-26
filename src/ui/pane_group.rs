@@ -1,5 +1,5 @@
-use crate::stores::{DividerDrag, Member, PaneAxis, PaneStore};
-use crate::ui::pane::Axis;
+use crate::stores::{Member, PaneAxis, PaneStore};
+use crate::ui::pane::{Axis, DividerDrag};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;

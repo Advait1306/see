@@ -1,8 +1,27 @@
-use crate::config::{self, MemberConfig};
+//! PaneStore manages the layout of panes within a workspace.
+//!
+//! # Architecture
+//!
+//! The pane layout is a tree structure where:
+//! - Leaf nodes are `Member::Pane` containing a single `Pane` entity with tabs
+//! - Internal nodes are `Member::Axis` containing multiple children split along an axis
+//!
+//! # Layout Persistence
+//!
+//! Layouts are saved to `layouts/{workspace_id}.json` and restored on workspace load.
+//! The `LayoutNode` enum is the serializable representation of the tree.
+//!
+//! # Splitting and Removing Panes
+//!
+//! When a pane is split, the tree is modified to insert a new `PaneAxis` node.
+//! When a pane is removed and its parent axis has only one child left, the axis
+//! is collapsed to simplify the tree.
+
+use crate::config;
 use crate::stores::EditorStore;
 use crate::stores::TerminalStore;
-use crate::types::{EditorTabConfig, TabConfig, TerminalTabConfig};
-use crate::ui::pane::{Axis, Pane, PaneEvent, SplitDirection, TabItem};
+use crate::types::TabConfig;
+use crate::ui::pane::{Axis, DividerDrag, Pane, PaneEvent, SplitDirection, TabItem};
 use crate::ui::{EditorView, TerminalView};
 use gpui::prelude::*;
 use gpui::*;
@@ -12,24 +31,18 @@ use std::path::PathBuf;
 const MIN_PANE_SIZE: f32 = 100.0;
 const DIVIDER_SIZE: f32 = 4.0;
 
-// =============================================================================
-// Layout Serialization Types
-// =============================================================================
-
-/// Serializable state for a pane (collection of tabs)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PaneConfig {
     pub tabs: Vec<TabConfig>,
     pub active_index: usize,
 }
 
-/// Serializable layout tree node
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum LayoutNode {
     Pane(PaneConfig),
     Split {
-        axis: LayoutAxis,
+        axis: Axis,
         ratios: Vec<f32>,
         children: Vec<LayoutNode>,
     },
@@ -41,32 +54,6 @@ impl Default for LayoutNode {
             tabs: Vec::new(),
             active_index: 0,
         })
-    }
-}
-
-/// Axis for serialization (separate from internal Axis to avoid coupling)
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
-#[serde(rename_all = "lowercase")]
-pub enum LayoutAxis {
-    Horizontal,
-    Vertical,
-}
-
-impl From<Axis> for LayoutAxis {
-    fn from(axis: Axis) -> Self {
-        match axis {
-            Axis::Horizontal => LayoutAxis::Horizontal,
-            Axis::Vertical => LayoutAxis::Vertical,
-        }
-    }
-}
-
-impl From<LayoutAxis> for Axis {
-    fn from(axis: LayoutAxis) -> Self {
-        match axis {
-            LayoutAxis::Horizontal => Axis::Horizontal,
-            LayoutAxis::Vertical => Axis::Vertical,
-        }
     }
 }
 
@@ -194,31 +181,6 @@ impl PaneAxis {
     }
 }
 
-#[derive(Clone)]
-pub struct DividerDrag {
-    pub axis: Axis,
-    pub divider_index: usize,
-    pub axis_path: Vec<usize>,
-    pub container_size: f32,
-}
-
-impl DividerDrag {
-    pub fn new(axis: Axis, divider_index: usize, axis_path: Vec<usize>, container_size: f32) -> Self {
-        Self {
-            axis,
-            divider_index,
-            axis_path,
-            container_size,
-        }
-    }
-}
-
-impl Render for DividerDrag {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-    }
-}
-
 pub struct PaneStore {
     workspace_id: String,
     pub root: Member,
@@ -251,7 +213,9 @@ impl PaneStore {
         buffer_store: Entity<EditorStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let layout = Self::load_layout_with_migration(&workspace_id, &workspace_path);
+        let layout_path = config::layout_path(&workspace_id);
+        let layout: LayoutNode = config::load_json(&layout_path);
+
         let member = Self::create_member_from_layout(&layout, &workspace_path, &buffer_store, cx);
         let active_pane = member.first_pane();
         let mut store = Self::with_root(workspace_id, member, cx);
@@ -267,28 +231,6 @@ impl PaneStore {
         }
 
         store
-    }
-
-    fn load_layout_with_migration(workspace_id: &str, workspace_path: &PathBuf) -> LayoutNode {
-        let layout_path = config::layout_path(workspace_id);
-        if layout_path.exists() {
-            config::load_json(&layout_path)
-        } else if config::legacy_state_exists() {
-            log::info!(
-                "Migrating layout for workspace {} from legacy state.json",
-                workspace_id
-            );
-            let legacy = config::load_state();
-            if let Some(wc) = legacy.workspaces.iter().find(|w| w.id == workspace_id) {
-                let layout = Self::convert_member_config_to_layout(&wc.layout, workspace_path);
-                config::save_json(&layout_path, &layout);
-                layout
-            } else {
-                LayoutNode::default()
-            }
-        } else {
-            LayoutNode::default()
-        }
     }
 
     fn create_member_from_layout(
@@ -351,72 +293,16 @@ impl PaneStore {
                 ratios,
                 children,
             } => {
-                let axis = Axis::from(*axis);
                 let members: Vec<Member> = children
                     .iter()
                     .map(|child| Self::create_member_from_layout(child, path, buffer_store, cx))
                     .collect();
 
                 Member::Axis(PaneAxis {
-                    axis,
+                    axis: *axis,
                     members,
                     ratios: ratios.clone(),
                 })
-            }
-        }
-    }
-
-    fn convert_member_config_to_layout(config: &MemberConfig, default_path: &PathBuf) -> LayoutNode {
-        match config {
-            MemberConfig::Pane {
-                terminal_count,
-                active_index,
-                open_files,
-            } => {
-                let mut tabs = Vec::new();
-
-                for _ in 0..*terminal_count {
-                    tabs.push(TabConfig::Terminal(TerminalTabConfig {
-                        cwd: default_path.clone(),
-                    }));
-                }
-
-                for file_path in open_files {
-                    tabs.push(TabConfig::Editor(EditorTabConfig {
-                        path: file_path.clone(),
-                    }));
-                }
-
-                if tabs.is_empty() {
-                    tabs.push(TabConfig::Terminal(TerminalTabConfig {
-                        cwd: default_path.clone(),
-                    }));
-                }
-
-                LayoutNode::Pane(PaneConfig {
-                    tabs,
-                    active_index: *active_index,
-                })
-            }
-            MemberConfig::Axis {
-                axis,
-                ratios,
-                members,
-            } => {
-                let layout_axis = match axis {
-                    config::Axis::Horizontal => LayoutAxis::Horizontal,
-                    config::Axis::Vertical => LayoutAxis::Vertical,
-                };
-                let children: Vec<LayoutNode> = members
-                    .iter()
-                    .map(|m| Self::convert_member_config_to_layout(m, default_path))
-                    .collect();
-
-                LayoutNode::Split {
-                    axis: layout_axis,
-                    ratios: ratios.clone(),
-                    children,
-                }
             }
         }
     }
@@ -463,7 +349,7 @@ impl PaneStore {
                 })
             }
             Member::Axis(axis) => LayoutNode::Split {
-                axis: axis.axis.into(),
+                axis: axis.axis,
                 ratios: axis.ratios.clone(),
                 children: axis
                     .members

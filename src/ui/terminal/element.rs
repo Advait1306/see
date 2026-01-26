@@ -1,4 +1,41 @@
-//! Terminal element for efficient rendering
+//! Terminal element for efficient rendering using GPUI's Element trait.
+//!
+//! # Architecture
+//!
+//! The terminal uses Alacritty's terminal emulator (`alacritty_terminal`) for PTY
+//! management and VT parsing. This element handles rendering the terminal grid to
+//! the screen.
+//!
+//! # Rendering Pipeline
+//!
+//! 1. **request_layout**: Returns a layout ID requesting full available space.
+//!
+//! 2. **prepaint**: Prepares rendering data:
+//!    - Calculates terminal grid size (cols x rows) from viewport dimensions
+//!    - Resizes the PTY if the terminal size changed
+//!    - Iterates through the terminal grid to build `BatchedTextRun`s
+//!    - Handles cell flags (BOLD, INVERSE, WIDE_CHAR_SPACER)
+//!    - Computes cursor position and shape
+//!    - Extracts selection ranges for highlighting
+//!    - Stores bounds for mouse coordinate conversion
+//!
+//! 3. **paint**: Draws the terminal:
+//!    - Fills background
+//!    - Paints selection highlights
+//!    - Paints batched text runs (optimized to group adjacent cells with same style)
+//!    - Paints cursor (block, bar, underline, or hollow)
+//!
+//! # Text Batching
+//!
+//! Adjacent cells with the same foreground color, background, and bold state are
+//! grouped into `BatchedTextRun`s to reduce draw calls. Each run is shaped and
+//! painted as a single text string.
+//!
+//! # Cursor Handling
+//!
+//! The cursor is rendered separately from text. For block cursors, the character
+//! under the cursor is skipped during text rendering and drawn by `CursorLayout`
+//! with inverted colors.
 
 use super::colors::ansi_to_hsla;
 use super::cursor::{CursorLayout, CursorShape, DisplayCursor};

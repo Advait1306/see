@@ -1,4 +1,32 @@
-//! Editor element for efficient rendering
+//! Editor element for efficient rendering using GPUI's Element trait.
+//!
+//! # Rendering Pipeline
+//!
+//! The editor uses GPUI's three-phase rendering:
+//!
+//! 1. **request_layout**: Returns a layout ID requesting full available space.
+//!
+//! 2. **prepaint**: Calculates what needs to be drawn:
+//!    - Determines visible lines based on scroll offset and viewport height
+//!    - Calculates line number gutter width based on total line count
+//!    - Computes cursor position accounting for horizontal scroll
+//!    - Builds selection ranges for visible lines
+//!    - Stores bounds in the view for mouse click handling
+//!
+//! 3. **paint**: Actually draws the editor:
+//!    - Fills background
+//!    - Paints line number gutter (outside clip region)
+//!    - Within a clipped text area:
+//!      - Paints selection highlights
+//!      - Paints text content with monospace font
+//!      - Paints blinking cursor
+//!
+//! # Coordinate System
+//!
+//! - `scroll_offset`: Vertical scroll in lines (0 = top of document)
+//! - `scroll_x`: Horizontal scroll in pixels
+//! - `cursor_line`, `cursor_col`: 0-indexed position in the document
+//! - Line numbers display as 1-indexed
 
 use super::selection::Selection;
 use super::view::EditorView;

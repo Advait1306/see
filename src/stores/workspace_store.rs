@@ -34,40 +34,13 @@ impl Global for GlobalWorkspaceStore {}
 
 impl WorkspaceStore {
     pub fn init(cx: &mut App) -> Entity<Self> {
-        let store = cx.new(|cx| Self::load_with_migration(cx));
+        let store = cx.new(|cx| Self::load(cx));
         cx.set_global(GlobalWorkspaceStore(store.clone()));
         store
     }
 
-    fn load_with_migration(cx: &mut Context<Self>) -> Self {
+    fn load(cx: &mut Context<Self>) -> Self {
         let config: WorkspacesConfig = config::load_json(&config::workspaces_path());
-
-        // If new format is empty but legacy exists, migrate
-        if config.workspaces.is_empty() && config::legacy_state_exists() {
-            log::info!("Migrating workspaces from legacy state.json");
-            let legacy = config::load_state();
-            let workspace_data: Vec<WorkspaceData> = legacy
-                .workspaces
-                .into_iter()
-                .map(|wc| WorkspaceData {
-                    id: wc.id,
-                    name: wc.name,
-                    path: wc.path,
-                })
-                .collect();
-
-            let (workspaces, workspace_order, subscriptions) =
-                Self::create_workspaces_from_data(&workspace_data, cx);
-
-            let store = Self {
-                workspaces,
-                workspace_order,
-                _subscriptions: subscriptions,
-            };
-
-            store.save(cx);
-            return store;
-        }
 
         let (workspaces, workspace_order, subscriptions) =
             Self::create_workspaces_from_data(&config.workspaces, cx);

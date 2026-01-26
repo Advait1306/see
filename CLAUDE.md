@@ -10,6 +10,11 @@
 - Only add comments on code that's hard to read at first glance or to document behavior that isn't obvious
 - Avoid comments that merely restate what the code does (e.g., `// Get the config directory for the app` above a function named `config_dir()`)
 
+## Architecture
+
+- All views (types that implement `Render`) should have their own file
+- Stores should not contain views - keep rendering logic in the `ui/` directory
+
 ## Migration Strategy
 
 When making changes to persisted state formats:

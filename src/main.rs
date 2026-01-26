@@ -38,16 +38,9 @@ fn main() {
             .add_fonts(vec![Cow::Borrowed(font_data.as_slice())])
             .expect("Failed to load Paper Mono font");
 
-        // Initialize global stores (each store handles its own migration from legacy state.json)
-        // FileTreeStore and PaneStore are now created per-workspace inside WorkspaceStore
         EditorStore::init(cx);
         TerminalStore::init(cx);
         let workspace_store = WorkspaceStore::init(cx);
-
-        // Delete legacy state.json after all stores have migrated
-        if config::legacy_state_exists() {
-            config::delete_legacy_state();
-        }
 
         cx.open_window(
             WindowOptions {

@@ -2,6 +2,7 @@ use crate::types::Tab;
 use crate::types::TabConfig;
 use crate::ui::{EditorView, TerminalView};
 use gpui::*;
+use serde::{Deserialize, Serialize};
 
 use super::Pane;
 
@@ -26,7 +27,8 @@ impl SplitDirection {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Axis {
     Horizontal,
     Vertical,

@@ -1,4 +1,4 @@
-use crate::stores::{EditorStore, FileEntry, WindowStore};
+use crate::stores::{EditorStore, FileEntry, WindowStore, WindowStoreEvent};
 use crate::ui::EditorView;
 use crate::ui::pane::TabItem;
 use crate::workspace::{Workspace, WorkspaceEvent};
@@ -143,7 +143,6 @@ pub struct FileTree {
 impl FileTree {
     pub fn new(window_store: Entity<WindowStore>, cx: &mut Context<Self>) -> Self {
         let window_store_sub = cx.subscribe(&window_store, |this, _store, event, cx| {
-            use crate::stores::WindowStoreEvent;
             match event {
                 WindowStoreEvent::ActiveWorkspaceChanged => {
                     this.refresh_entries(cx);
@@ -178,11 +177,10 @@ impl FileTree {
     }
 
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
-        let window_store = self.window_store.read(cx);
-        window_store.active_workspace(cx).cloned()
+        self.window_store.read(cx).active_workspace(cx).cloned()
     }
 
-    fn entries(&self, cx: &App) -> Vec<FileEntry> {
+    fn file_tree_entries(&self, cx: &App) -> Vec<FileEntry> {
         if let Some(workspace) = self.active_workspace(cx) {
             let ws = workspace.read(cx);
             ws.file_tree_store().read(cx).entries().clone()
@@ -229,7 +227,7 @@ impl FileTree {
 
     fn ensure_list_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.list_state.is_none() {
-            let entries = self.entries(cx);
+            let entries = self.file_tree_entries(cx);
             let delegate = FileTreeDelegate {
                 entries,
                 selected_index: None,
@@ -255,7 +253,7 @@ impl FileTree {
     }
 
     fn refresh_entries(&mut self, cx: &mut Context<Self>) {
-        let entries = self.entries(cx);
+        let entries = self.file_tree_entries(cx);
         if let Some(list_state) = &self.list_state {
             list_state.update(cx, |state, _cx| {
                 state.delegate_mut().entries = entries;
