@@ -1,17 +1,17 @@
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
-use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::event_loop::{EventLoop, Msg, Notifier};
-use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Point as AlacPoint, Side};
-use alacritty_terminal::term::TermMode;
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::test::TermSize;
-use alacritty_terminal::term::{Config as TermConfig, Term};
+use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::tty::{self, Options as PtyOptions};
 use anyhow::Result;
+use gpui::*;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct TerminalEventListener {
@@ -65,58 +65,26 @@ impl Dimensions for TerminalSize {
     }
 }
 
-pub struct Terminal {
+#[derive(Debug, Clone)]
+pub enum TerminalEvent {
+    ContentChanged,
+}
+
+pub struct TerminalInner {
     term: Arc<FairMutex<Term<TerminalEventListener>>>,
     notifier: Notifier,
     event_receiver: std::sync::mpsc::Receiver<Event>,
     size: TerminalSize,
+    working_directory: PathBuf,
 }
 
-impl Terminal {
-    pub fn new(working_directory: PathBuf) -> Result<Self> {
-        let size = TerminalSize::default();
-        let (event_sender, event_receiver) = std::sync::mpsc::channel();
+pub struct Terminal {
+    inner: Arc<parking_lot::Mutex<TerminalInner>>,
+}
 
-        let listener = TerminalEventListener {
-            sender: event_sender,
-        };
+impl EventEmitter<TerminalEvent> for Terminal {}
 
-        let config = TermConfig::default();
-        let term_size = TermSize::new(size.cols as usize, size.rows as usize);
-        let term = Term::new(config, &term_size, listener.clone());
-        let term = Arc::new(FairMutex::new(term));
-
-        let mut env = std::collections::HashMap::new();
-        env.insert("TERM".to_string(), "xterm-256color".to_string());
-        env.insert("COLORTERM".to_string(), "truecolor".to_string());
-
-        let pty_options = PtyOptions {
-            shell: None,
-            working_directory: Some(working_directory.clone()),
-            env,
-            ..Default::default()
-        };
-
-        let window_size = WindowSize {
-            num_cols: size.cols,
-            num_lines: size.rows,
-            cell_width: size.cell_width,
-            cell_height: size.cell_height,
-        };
-
-        let pty = tty::new(&pty_options, window_size, 0)?;
-        let event_loop = EventLoop::new(term.clone(), listener, pty, false, false)?;
-        let notifier = Notifier(event_loop.channel());
-        let _event_loop_handle = event_loop.spawn();
-
-        Ok(Self {
-            term,
-            notifier,
-            event_receiver,
-            size,
-        })
-    }
-
+impl TerminalInner {
     pub fn write(&self, input: &[u8]) {
         let _ = self.notifier.0.send(Msg::Input(input.to_vec().into()));
     }
@@ -149,7 +117,6 @@ impl Terminal {
     }
 
     pub fn drain_events(&self) -> bool {
-        // Consume all pending events and return true if there were any
         let mut had_events = false;
         while self.event_receiver.try_recv().is_ok() {
             had_events = true;
@@ -189,5 +156,90 @@ impl Terminal {
     pub fn mode(&self) -> TermMode {
         let term = self.term.lock();
         *term.mode()
+    }
+
+    pub fn working_directory(&self) -> &PathBuf {
+        &self.working_directory
+    }
+}
+
+impl Terminal {
+    pub fn new(working_directory: PathBuf, cx: &mut Context<Self>) -> Result<Self> {
+        let size = TerminalSize::default();
+        let (event_sender, event_receiver) = std::sync::mpsc::channel();
+
+        let listener = TerminalEventListener {
+            sender: event_sender,
+        };
+
+        let config = TermConfig::default();
+        let term_size = TermSize::new(size.cols as usize, size.rows as usize);
+        let term = Term::new(config, &term_size, listener.clone());
+        let term = Arc::new(FairMutex::new(term));
+
+        let mut env = std::collections::HashMap::new();
+        env.insert("TERM".to_string(), "xterm-256color".to_string());
+        env.insert("COLORTERM".to_string(), "truecolor".to_string());
+
+        let pty_options = PtyOptions {
+            shell: None,
+            working_directory: Some(working_directory.clone()),
+            env,
+            ..Default::default()
+        };
+
+        let window_size = WindowSize {
+            num_cols: size.cols,
+            num_lines: size.rows,
+            cell_width: size.cell_width,
+            cell_height: size.cell_height,
+        };
+
+        let pty = tty::new(&pty_options, window_size, 0)?;
+        let event_loop = EventLoop::new(term.clone(), listener, pty, false, false)?;
+        let notifier = Notifier(event_loop.channel());
+        let _event_loop_handle = event_loop.spawn();
+
+        let inner = Arc::new(parking_lot::Mutex::new(TerminalInner {
+            term,
+            notifier,
+            event_receiver,
+            size,
+            working_directory,
+        }));
+
+        let terminal = Self { inner };
+        terminal.start_polling(cx);
+
+        Ok(terminal)
+    }
+
+    fn start_polling(&self, cx: &mut Context<Self>) {
+        let inner = self.inner.clone();
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(30))
+                    .await;
+
+                let has_events = inner.lock().drain_events();
+                if has_events {
+                    let _ = this.update(cx, |_, cx| {
+                        cx.emit(TerminalEvent::ContentChanged);
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Get a reference to the inner terminal for direct access (used by elements)
+    pub fn inner(&self) -> Arc<parking_lot::Mutex<TerminalInner>> {
+        self.inner.clone()
+    }
+
+    pub fn cwd(&self) -> PathBuf {
+        self.inner.lock().working_directory().clone()
     }
 }

@@ -1,93 +1,18 @@
-use crate::editor::Buffer;
-use crate::terminal::Terminal;
-use crate::ui::editor_view::EditorView;
+use crate::stores::TerminalStore;
 use crate::ui::TerminalView;
 use gpui::prelude::*;
 use gpui::*;
+use gpui_component::theme::ActiveTheme;
 use std::path::PathBuf;
-use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SplitDirection {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-impl SplitDirection {
-    pub fn axis(&self) -> Axis {
-        match self {
-            SplitDirection::Up | SplitDirection::Down => Axis::Vertical,
-            SplitDirection::Left | SplitDirection::Right => Axis::Horizontal,
-        }
-    }
-
-    pub fn is_before(&self) -> bool {
-        matches!(self, SplitDirection::Up | SplitDirection::Left)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Axis {
-    Horizontal,
-    Vertical,
-}
-
-/// Represents a tab item which can be either a terminal or an editor
-#[derive(Clone)]
-pub enum TabItem {
-    Terminal(Entity<TerminalView>),
-    Editor(Entity<EditorView>),
-}
-
-impl TabItem {
-    pub fn label(&self, cx: &App) -> String {
-        match self {
-            TabItem::Terminal(_) => "Terminal".to_string(),
-            TabItem::Editor(editor) => {
-                let editor_view = editor.read(cx);
-                let buffer = editor_view.buffer().read(cx);
-                let name = buffer.file_name();
-                if buffer.is_dirty() {
-                    format!("{}*", name)
-                } else {
-                    name
-                }
-            }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct DraggedTab {
-    pub pane: Entity<Pane>,
-    pub tab: TabItem,
-    pub index: usize,
-}
-
-impl Render for DraggedTab {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let label = self.tab.label(cx);
-        div()
-            .px_3()
-            .py_1()
-            .bg(rgb(0x313244))
-            .border_1()
-            .border_color(rgb(0x45475a))
-            .rounded_md()
-            .text_color(rgb(0xcdd6f4))
-            .text_xs()
-            .child(label)
-    }
-}
+use super::{DraggedTab, PaneEvent, SplitDirection, TabItem};
 
 pub struct Pane {
     pub tabs: Vec<TabItem>,
     pub active_index: usize,
     pub focus_handle: FocusHandle,
     pub path: PathBuf,
-    terminal_counter: usize, // For naming terminals
+    terminal_counter: usize,
 }
 
 impl Pane {
@@ -102,21 +27,19 @@ impl Pane {
     }
 
     pub fn add_terminal(&mut self, cx: &mut Context<Self>) {
-        if let Ok(terminal) = Terminal::new(self.path.clone()) {
-            let terminal = Arc::new(parking_lot::Mutex::new(terminal));
+        let terminal_store = TerminalStore::global(cx);
+        // TODO(fix): Terminal view is gotten added as an entity which shouldn't be happening
+        let result = terminal_store.update(cx, |store, cx| {
+            store.create_terminal(self.path.clone(), cx)
+        });
+
+        if let Some((_id, terminal)) = result {
             let terminal_view = cx.new(|cx| TerminalView::new(terminal, cx));
             self.tabs.push(TabItem::Terminal(terminal_view));
             self.terminal_counter += 1;
             self.active_index = self.tabs.len() - 1;
             cx.notify();
         }
-    }
-
-    pub fn add_editor(&mut self, buffer: Entity<Buffer>, file_path: PathBuf, cx: &mut Context<Self>) {
-        let editor_view = cx.new(|cx| EditorView::new(buffer, file_path, cx));
-        self.tabs.push(TabItem::Editor(editor_view));
-        self.active_index = self.tabs.len() - 1;
-        cx.notify();
     }
 
     pub fn add_tab(&mut self, tab: TabItem, cx: &mut Context<Self>) {
@@ -145,37 +68,6 @@ impl Pane {
         self.tabs.get(self.active_index)
     }
 
-    /// For backwards compatibility - returns the active terminal if the active tab is a terminal
-    pub fn active_terminal(&self) -> Option<&Entity<TerminalView>> {
-        match self.active_tab() {
-            Some(TabItem::Terminal(terminal)) => Some(terminal),
-            _ => None,
-        }
-    }
-
-    /// Returns the count of terminal tabs (for state serialization)
-    pub fn terminal_count(&self) -> usize {
-        self.tabs
-            .iter()
-            .filter(|tab| matches!(tab, TabItem::Terminal(_)))
-            .count()
-    }
-
-    /// Returns the file paths of open editor tabs (for state serialization)
-    pub fn open_file_paths(&self, cx: &App) -> Vec<PathBuf> {
-        self.tabs
-            .iter()
-            .filter_map(|tab| {
-                if let TabItem::Editor(editor) = tab {
-                    let editor_view = editor.read(cx);
-                    Some(editor_view.buffer().read(cx).file_path().clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
     pub fn select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.tabs.len() {
             self.active_index = index;
@@ -186,13 +78,19 @@ impl Pane {
     fn render_tab_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         let pane_entity = cx.entity().clone();
         let mut terminal_idx = 0usize;
+        let theme = cx.theme();
+        let tab_bar_bg = theme.tab_bar;
+        let border_color = theme.border;
+        let background_color = theme.background;
+        let foreground_color = theme.foreground;
+        let muted_color = theme.muted_foreground;
 
         div()
             .flex()
             .h(px(32.0))
-            .bg(rgb(0x11111b))
+            .bg(tab_bar_bg)
             .border_b_1()
-            .border_color(rgb(0x313244))
+            .border_color(border_color)
             .items_center()
             .px_2()
             .gap_1()
@@ -254,12 +152,12 @@ impl Pane {
                     .py_1()
                     .rounded_sm()
                     .cursor_pointer()
-                    .when(is_active, |el| el.bg(rgb(0x1e1e2e)))
-                    .when(!is_active, |el| el.hover(|el| el.bg(rgb(0x313244))))
+                    .when(is_active, |el| el.bg(background_color))
+                    .when(!is_active, |el| el.hover(|el| el.bg(border_color)))
                     .text_color(if is_active {
-                        rgb(0xcdd6f4)
+                        foreground_color
                     } else {
-                        rgb(0x6c7086)
+                        muted_color
                     })
                     .text_xs()
                     .on_click(cx.listener(move |this, _, _window, cx| {
@@ -282,8 +180,8 @@ impl Pane {
                     .py_1()
                     .rounded_sm()
                     .cursor_pointer()
-                    .hover(|el| el.bg(rgb(0x313244)))
-                    .text_color(rgb(0x6c7086))
+                    .hover(|el| el.bg(border_color))
+                    .text_color(muted_color)
                     .text_xs()
                     .on_click(cx.listener(|this, _, _window, cx| {
                         this.add_terminal(cx);
@@ -294,7 +192,9 @@ impl Pane {
     }
 
     fn render_drop_zones(&self, cx: &Context<Self>) -> impl IntoElement {
-        let drop_color = rgba(0x89b4fa4d); // Blue with ~30% opacity
+        // Use theme primary color with alpha for drop zones
+        let mut drop_color = cx.theme().primary;
+        drop_color.a = 0.3;
 
         // Create invisible edge zones that show highlight on drag-over
         div()
@@ -398,23 +298,13 @@ impl Pane {
     }
 }
 
-pub enum PaneEvent {
-    Split {
-        direction: SplitDirection,
-        new_pane: Entity<Pane>,
-    },
-    TabMoved,
-    TerminalAdded,
-    TabClosed,
-    Focus,
-}
-
 impl EventEmitter<PaneEvent> for Pane {}
 
 impl Render for Pane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let active_tab = self.active_tab().cloned();
+        let theme = cx.theme();
 
         div()
             .id("pane")
@@ -424,9 +314,9 @@ impl Render for Pane {
             .flex()
             .flex_col()
             .relative()
-            .bg(rgb(0x1e1e2e))
+            .bg(theme.background)
             .border_1()
-            .border_color(rgb(0x313244))
+            .border_color(theme.border)
             .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, cx| {
                 cx.emit(PaneEvent::Focus);
             }))

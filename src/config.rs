@@ -1,63 +1,12 @@
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const APP_NAME: &str = if cfg!(debug_assertions) {
     "August (Dev)"
 } else {
     "August"
 };
-
-#[derive(Serialize, Deserialize, Default)]
-pub struct AppState {
-    pub workspaces: Vec<WorkspaceConfig>,
-    pub active_workspace_index: Option<usize>,
-    #[serde(default)]
-    pub file_tree_visible: bool,
-}
-
-use std::collections::HashSet;
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct WorkspaceConfig {
-    pub id: String,
-    pub name: String,
-    pub path: PathBuf,
-    #[serde(default = "default_layout")]
-    pub layout: MemberConfig,
-    #[serde(default)]
-    pub expanded_paths: HashSet<PathBuf>,
-}
-
-fn default_layout() -> MemberConfig {
-    MemberConfig::Pane {
-        terminal_count: 1,
-        active_index: 0,
-        open_files: Vec::new(),
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(tag = "type")]
-pub enum MemberConfig {
-    Pane {
-        terminal_count: usize,
-        active_index: usize,
-        #[serde(default)]
-        open_files: Vec<PathBuf>,
-    },
-    Axis {
-        axis: Axis,
-        ratios: Vec<f32>,
-        members: Vec<MemberConfig>,
-    },
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Axis {
-    Horizontal,
-    Vertical,
-}
 
 pub fn config_dir() -> PathBuf {
     let folder = if cfg!(debug_assertions) {
@@ -70,34 +19,53 @@ pub fn config_dir() -> PathBuf {
         .join(folder)
 }
 
-pub fn config_path() -> PathBuf {
-    config_dir().join("state.json")
+pub fn workspaces_path() -> PathBuf {
+    config_dir().join("workspaces.json")
 }
 
-pub fn load_state() -> AppState {
-    let path = config_path();
-    if path.exists() {
-        match fs::read_to_string(&path) {
-            Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-            Err(_) => AppState::default(),
+pub fn ui_state_path() -> PathBuf {
+    config_dir().join("ui-state.json")
+}
+
+pub fn layouts_dir() -> PathBuf {
+    config_dir().join("layouts")
+}
+
+pub fn layout_path(workspace_id: &str) -> PathBuf {
+    layouts_dir().join(format!("{}.json", workspace_id))
+}
+
+pub fn workspaces_dir() -> PathBuf {
+    config_dir().join("workspaces")
+}
+
+pub fn workspace_file_tree_path(workspace_id: &str) -> PathBuf {
+    workspaces_dir().join(workspace_id).join("file-tree.json")
+}
+
+pub fn load_json<T: DeserializeOwned + Default>(path: &Path) -> T {
+    if !path.exists() {
+        return T::default();
+    }
+
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_json<T: Serialize>(path: &Path, data: &T) {
+    if let Some(parent) = path.parent() {
+        if let Err(e) = fs::create_dir_all(parent) {
+            log::error!("Failed to create config directory: {}", e);
+            return;
         }
-    } else {
-        AppState::default()
-    }
-}
-
-pub fn save_state(state: &AppState) {
-    let dir = config_dir();
-    if let Err(e) = fs::create_dir_all(&dir) {
-        log::error!("Failed to create config directory: {}", e);
-        return;
     }
 
-    let path = config_path();
-    match serde_json::to_string_pretty(state) {
+    match serde_json::to_string_pretty(data) {
         Ok(json) => {
-            if let Err(e) = fs::write(&path, json) {
-                log::error!("Failed to save state: {}", e);
+            if let Err(e) = fs::write(path, json) {
+                log::error!("Failed to save state to {:?}: {}", path, e);
             }
         }
         Err(e) => {
