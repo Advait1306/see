@@ -94,9 +94,10 @@ impl Render for WorkspaceSidebar {
         div()
             .id("workspace-sidebar")
             .size_full()
+            .overflow_hidden()
             .track_focus(&self.focus_handle)
             .child(
-                Sidebar::new(Side::Left).child(
+                Sidebar::new(Side::Left).w_full().child(
                     SidebarMenu::new()
                         .children(workspaces.into_iter().map(|(id, name, is_active)| {
                             SidebarMenuItem::new(name)
