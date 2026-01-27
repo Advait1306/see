@@ -52,6 +52,14 @@ impl WindowView {
             .map(|ws| ws.read(cx).pane_group_view().clone())
     }
 
+    pub fn focus_active_content(&self, window: &mut Window, cx: &App) {
+        if let Some(pane_store) = self.active_pane_store(cx) {
+            if let Some(pane) = &pane_store.read(cx).active_pane {
+                pane.read(cx).focus_active_tab(window, cx);
+            }
+        }
+    }
+
     pub fn toggle_file_tree(&mut self, cx: &mut Context<Self>) {
         self.window_store.update(cx, |store, cx| {
             store.toggle_file_tree(cx);
@@ -178,21 +186,26 @@ impl Render for WindowView {
             .key_context("AppView")
             .track_focus(&focus_handle)
             // Pane commands
-            .on_action(cx.listener(|this, _: &ClosePane, _window, cx| {
+            .on_action(cx.listener(|this, _: &ClosePane, window, cx| {
                 this.close_current_pane(cx);
+                this.focus_active_content(window, cx);
             }))
-            .on_action(cx.listener(|this, _: &PrevPane, _window, cx| {
+            .on_action(cx.listener(|this, _: &PrevPane, window, cx| {
                 this.prev_pane(cx);
+                this.focus_active_content(window, cx);
             }))
-            .on_action(cx.listener(|this, _: &NextPane, _window, cx| {
+            .on_action(cx.listener(|this, _: &NextPane, window, cx| {
                 this.next_pane(cx);
+                this.focus_active_content(window, cx);
             }))
             // Workspace commands
-            .on_action(cx.listener(|this, _: &PrevWorkspace, _window, cx| {
+            .on_action(cx.listener(|this, _: &PrevWorkspace, window, cx| {
                 this.prev_workspace(cx);
+                this.focus_active_content(window, cx);
             }))
-            .on_action(cx.listener(|this, _: &NextWorkspace, _window, cx| {
+            .on_action(cx.listener(|this, _: &NextWorkspace, window, cx| {
                 this.next_workspace(cx);
+                this.focus_active_content(window, cx);
             }))
             // UI commands
             .on_action(
@@ -200,11 +213,21 @@ impl Render for WindowView {
                     this.toggle_workspace_sidebar(cx);
                 }),
             )
-            .on_action(cx.listener(|this, _: &ToggleFileTree, _window, cx| {
+            .on_action(cx.listener(|this, _: &ToggleFileTree, window, cx| {
                 this.toggle_file_tree(cx);
+                if this.right_sidebar(cx) == RightSidebarPanel::FileTree {
+                    this.file_tree.read(cx).focus_handle(cx).focus(window);
+                } else {
+                    this.focus_active_content(window, cx);
+                }
             }))
-            .on_action(cx.listener(|this, _: &ToggleDiffList, _window, cx| {
+            .on_action(cx.listener(|this, _: &ToggleDiffList, window, cx| {
                 this.toggle_diff_list(cx);
+                if this.right_sidebar(cx) == RightSidebarPanel::DiffList {
+                    this.diff_list.read(cx).focus_handle(cx).focus(window);
+                } else {
+                    this.focus_active_content(window, cx);
+                }
             }))
             .size_full()
             .flex()

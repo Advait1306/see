@@ -474,8 +474,8 @@ impl Element for EditorElement {
                 }
             }
 
-            // Paint cursor (inside clip region) - blink when focused
-            let should_show_cursor = if is_focused { cursor_visible } else { true };
+            // Paint cursor (inside clip region) - only show when focused, with blink
+            let should_show_cursor = is_focused && cursor_visible;
             if let Some(pos) = cursor_pos {
                 if should_show_cursor {
                     let cursor_bounds = Bounds {
