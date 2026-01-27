@@ -1,11 +1,10 @@
 use crate::commands::*;
 use crate::config;
-use crate::stores::{PaneStore, RightSidebarPanel, WindowStore, WorkspaceStore};
+use crate::stores::{PaneStore, RightSidebarPanel, WindowStore, Workspace, WorkspaceStore};
 use crate::ui::diff_list::DiffList;
 use crate::ui::file_tree::FileTree;
 use crate::ui::pane_group::PaneGroupView;
 use crate::ui::workspace_sidebar::WorkspaceSidebar;
-use crate::workspace::Workspace;
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;

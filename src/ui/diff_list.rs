@@ -1,10 +1,8 @@
 //! Diff carousel showing one file diff at a time with navigation
 
 use crate::commands::{NextDiff, PrevDiff};
-use crate::git::{ChangedFile, FileStatus, GitStore, GitStoreEvent};
-use crate::stores::{WindowStore, WindowStoreEvent};
+use crate::stores::{ChangedFile, FileStatus, GitStore, GitStoreEvent, WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
 use crate::ui::editor::{EditorView, EditorViewOptions};
-use crate::workspace::{Workspace, WorkspaceEvent};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;

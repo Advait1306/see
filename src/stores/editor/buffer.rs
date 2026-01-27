@@ -1,4 +1,4 @@
-use crate::git::{compute_hunks, compute_line_diffs, LineDiff};
+use super::super::git::{compute_hunks, compute_line_diffs, LineDiff};
 use git2::{Oid, Repository};
 use gpui::prelude::*;
 use gpui::*;

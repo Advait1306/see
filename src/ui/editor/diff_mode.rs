@@ -5,7 +5,7 @@
 //! - Colored backgrounds for added/deleted/unchanged lines
 //! - Collapsible sections for unchanged context
 
-use crate::editor::{DiffLine, DiffLineTag};
+use crate::stores::{DiffLine, DiffLineTag};
 
 /// What's actually displayed - either a real diff line or a collapsed indicator
 #[derive(Debug, Clone)]

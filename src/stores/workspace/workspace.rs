@@ -1,5 +1,5 @@
-use crate::git::GitStore;
-use crate::stores::{FileTreeStore, FileTreeStoreEvent, PaneStore, PaneStoreEvent};
+use super::super::git::GitStore;
+use super::super::{FileTreeStore, FileTreeStoreEvent, PaneStore, PaneStoreEvent};
 use crate::ui::pane_group::PaneGroupView;
 use gpui::*;
 use serde::{Deserialize, Serialize};

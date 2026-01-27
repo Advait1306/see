@@ -1,7 +1,6 @@
-use crate::stores::{FileEntry, WindowStore, WindowStoreEvent};
+use crate::stores::{FileEntry, WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
 use crate::ui::EditorView;
 use crate::ui::pane::TabItem;
-use crate::workspace::{Workspace, WorkspaceEvent};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::list::{List, ListDelegate, ListEvent, ListItem, ListState};

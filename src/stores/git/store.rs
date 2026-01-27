@@ -22,6 +22,7 @@ pub enum GitStoreEvent {
     ChangedFilesUpdated,
 }
 
+// TODO: This could potentially be a global store which is keyed to the path
 pub struct GitStore {
     repository: Option<Arc<Repository>>,
     workdir: Option<PathBuf>,

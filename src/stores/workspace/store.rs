@@ -1,5 +1,5 @@
 use crate::config;
-use crate::workspace::{Workspace, WorkspaceData, WorkspaceEvent};
+use super::{Workspace, WorkspaceData, WorkspaceEvent};
 use gpui::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

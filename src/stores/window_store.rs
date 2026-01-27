@@ -2,7 +2,7 @@ use gpui::*;
 use serde::{Deserialize, Serialize};
 
 use crate::config;
-use crate::workspace::Workspace;
+use super::workspace::Workspace;
 use super::{WorkspaceStore, WorkspaceStoreEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

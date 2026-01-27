@@ -29,12 +29,10 @@
 //! - Line numbers display as 1-indexed
 
 use super::diff_mode::DiffDisplayLine;
-use crate::editor::DiffLineTag;
 use super::selection::Selection;
 use super::view::EditorView;
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, GUTTER_MARKER_WIDTH, PADDING};
-use crate::editor::Buffer;
-use crate::git::LineDiff;
+use crate::stores::{Buffer, DiffLineTag, LineDiff};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;

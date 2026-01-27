@@ -2,7 +2,7 @@
 
 use super::selection::Selection;
 use super::view::EditorView;
-use crate::editor::EditorState;
+use crate::stores::EditorState;
 use crate::types::SelectionPhase;
 use gpui::*;
 

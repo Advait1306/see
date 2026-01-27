@@ -2,14 +2,11 @@ mod assets;
 mod commands;
 mod config;
 mod constants;
-mod editor;
 mod file_watcher;
-mod git;
 mod stores;
 mod terminal;
 mod types;
 mod ui;
-mod workspace;
 
 use assets::Assets;
 use commands::Quit;
