@@ -1,5 +1,5 @@
 use crate::git::GitStore;
-use crate::stores::{EditorStore, FileTreeStore, FileTreeStoreEvent, PaneStore, PaneStoreEvent};
+use crate::stores::{FileTreeStore, FileTreeStoreEvent, PaneStore, PaneStoreEvent};
 use crate::ui::pane_group::PaneGroupView;
 use gpui::*;
 use serde::{Deserialize, Serialize};
@@ -26,16 +26,13 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(id: String, name: String, path: PathBuf, cx: &mut Context<Self>) -> Self {
-        let buffer_store = EditorStore::global(cx);
-
         let file_tree_store = cx.new(|cx| FileTreeStore::new(id.clone(), path.clone(), cx));
         let git_store = cx.new(|cx| GitStore::new(path.clone(), cx));
 
         let pane_store = {
             let id = id.clone();
             let path = path.clone();
-            let git_store = git_store.clone();
-            cx.new(|cx| PaneStore::load(id, path, buffer_store, git_store, cx))
+            cx.new(|cx| PaneStore::load(id, path, cx))
         };
 
         let pane_group_view = {

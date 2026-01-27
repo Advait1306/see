@@ -28,7 +28,8 @@
 //! - `cursor_line`, `cursor_col`: 0-indexed position in the document
 //! - Line numbers display as 1-indexed
 
-use super::diff_mode::{DiffDisplayLine, DiffLineTag};
+use super::diff_mode::DiffDisplayLine;
+use crate::editor::DiffLineTag;
 use super::selection::Selection;
 use super::view::EditorView;
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, GUTTER_MARKER_WIDTH, PADDING};
@@ -41,7 +42,7 @@ use gpui_component::theme::ActiveTheme;
 /// Custom Element for efficient editor rendering
 pub(crate) struct EditorElement {
     pub(crate) view: Entity<EditorView>,
-    pub(crate) buffer: Option<Entity<Buffer>>,
+    pub(crate) buffer: Entity<Buffer>,
     pub(crate) cursor_line: usize,
     pub(crate) cursor_col: usize,
     pub(crate) scroll_offset: usize,
@@ -192,27 +193,22 @@ impl Element for EditorElement {
         }
 
         // Normal mode prepaint
-        let (line_count, visible_lines, line_diffs) = if let Some(ref buffer) = self.buffer {
-            let buffer = buffer.read(cx);
-            let line_count = buffer.line_count();
+        let buffer = self.buffer.read(cx);
+        let line_count = buffer.line_count();
 
-            let mut visible_lines = Vec::new();
-            let mut line_diffs = Vec::new();
-            for i in 0..visible_line_count {
-                let line_idx = self.scroll_offset + i;
-                if line_idx < line_count {
-                    if let Some(line) = buffer.line(line_idx) {
-                        // Remove trailing newline for display
-                        let line = line.trim_end_matches('\n').to_string();
-                        visible_lines.push((line_idx + 1, line)); // 1-indexed line numbers
-                        line_diffs.push(buffer.line_diff(line_idx));
-                    }
+        let mut visible_lines = Vec::new();
+        let mut line_diffs = Vec::new();
+        for i in 0..visible_line_count {
+            let line_idx = self.scroll_offset + i;
+            if line_idx < line_count {
+                if let Some(line) = buffer.line(line_idx) {
+                    // Remove trailing newline for display
+                    let line = line.trim_end_matches('\n').to_string();
+                    visible_lines.push((line_idx + 1, line)); // 1-indexed line numbers
+                    line_diffs.push(buffer.line_diff(line_idx));
                 }
             }
-            (line_count, visible_lines, line_diffs)
-        } else {
-            (0, Vec::new(), Vec::new())
-        };
+        }
 
         // Calculate line number width (4 characters minimum)
         let line_number_chars = format!("{}", line_count).len().max(4);

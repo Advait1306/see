@@ -1,4 +1,4 @@
-use crate::stores::{EditorStore, FileEntry, WindowStore, WindowStoreEvent};
+use crate::stores::{FileEntry, WindowStore, WindowStoreEvent};
 use crate::ui::EditorView;
 use crate::ui::pane::TabItem;
 use crate::workspace::{Workspace, WorkspaceEvent};
@@ -203,21 +203,12 @@ impl FileTree {
             return;
         };
 
-        let buffer_store = EditorStore::global(cx);
-        let buffer = buffer_store.update(cx, |store, cx| store.open_buffer(path.clone(), cx));
-
-        let Some(buffer) = buffer else {
-            log::error!("Failed to open buffer for {:?}", path);
-            return;
-        };
-
-        let git_store = workspace.read(cx).git_store().clone();
         let pane_store = workspace.read(cx).pane_store().clone();
         pane_store.update(cx, |ps, cx| {
             if let Some(pane) = ps.active_pane.clone() {
                 pane.update(cx, |p, cx| {
                     let editor_view =
-                        cx.new(|cx| EditorView::new(buffer, path, git_store.clone(), cx));
+                        cx.new(|cx| EditorView::new(path.clone(), Default::default(), cx));
                     p.tabs.push(TabItem::Editor(editor_view));
                     p.active_index = p.tabs.len() - 1;
                     cx.notify();

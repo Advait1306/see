@@ -1,3 +1,3 @@
 pub mod buffer;
 
-pub use buffer::{Buffer, BufferEvent, EditorState};
+pub use buffer::{Buffer, BufferEvent, DiffLine, DiffLineTag, EditorState};

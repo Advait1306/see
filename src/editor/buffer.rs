@@ -1,11 +1,30 @@
-use crate::git::LineDiff;
+use crate::git::{compute_hunks, compute_line_diffs, LineDiff};
+use git2::Repository;
 use gpui::prelude::*;
 use gpui::*;
 use ropey::Rope;
+use similar::{ChangeTag, TextDiff};
 use std::fs;
 use std::io::{self, BufReader, BufWriter};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::SystemTime;
+
+/// A line in a unified diff view
+#[derive(Debug, Clone)]
+pub struct DiffLine {
+    pub tag: DiffLineTag,
+    pub old_line_num: Option<usize>,
+    pub new_line_num: Option<usize>,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffLineTag {
+    Equal,
+    Insert,
+    Delete,
+}
 
 #[derive(Debug, Clone)]
 pub enum BufferEvent {
@@ -56,7 +75,12 @@ pub struct Buffer {
     is_dirty: bool,
     undo_stack: Vec<UndoOperation>,
     redo_stack: Vec<UndoOperation>,
+    /// Per-line diff status for gutter indicators
     line_diffs: Vec<LineDiff>,
+    /// Full diff lines for unified diff view
+    diff_lines: Vec<DiffLine>,
+    /// Cached git repository for this file
+    repository: Option<Arc<Repository>>,
 }
 
 impl EventEmitter<BufferEvent> for Buffer {}
@@ -68,7 +92,10 @@ impl Buffer {
         let reader = BufReader::new(file);
         let rope = Rope::from_reader(reader)?;
 
-        Ok(Self {
+        // Try to discover git repository for this file
+        let repository = Repository::discover(&path).ok().map(Arc::new);
+
+        let mut buffer = Self {
             rope,
             file_path: path,
             saved_mtime: mtime,
@@ -76,7 +103,14 @@ impl Buffer {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             line_diffs: Vec::new(),
-        })
+            diff_lines: Vec::new(),
+            repository,
+        };
+
+        // Compute initial diffs
+        buffer.recompute_diffs();
+
+        Ok(buffer)
     }
 
     pub fn save(&mut self, cx: &mut Context<Self>) -> io::Result<()> {
@@ -230,7 +264,8 @@ impl Buffer {
         // Clear undo/redo history on reload
         self.undo_stack.clear();
         self.redo_stack.clear();
-        self.line_diffs.clear();
+        // Recompute diffs
+        self.recompute_diffs();
         cx.emit(BufferEvent::Changed);
         cx.notify();
         Ok(())
@@ -343,18 +378,93 @@ impl Buffer {
         self.rope.len_chars()
     }
 
-    /// Set line diffs from git diff computation
-    pub fn set_line_diffs(&mut self, diffs: Vec<LineDiff>) {
-        self.line_diffs = diffs;
-    }
-
     /// Get the diff status for a specific line
     pub fn line_diff(&self, line: usize) -> LineDiff {
         self.line_diffs.get(line).copied().unwrap_or(LineDiff::Unchanged)
     }
 
-    /// Get the full content as a string (for diff computation)
-    pub fn content(&self) -> String {
-        self.rope.to_string()
+    /// Get the unified diff lines for diff mode display
+    pub fn diff_lines(&self) -> &[DiffLine] {
+        &self.diff_lines
+    }
+
+    /// Recompute diffs by comparing current content with HEAD
+    pub fn recompute_diffs(&mut self) {
+        let Some(repo) = &self.repository else {
+            self.line_diffs.clear();
+            self.diff_lines.clear();
+            return;
+        };
+
+        // For new files not in HEAD, treat HEAD content as empty (all lines are added)
+        let head_content = self.get_head_content(repo).unwrap_or_default();
+        let current_content = self.rope.to_string();
+
+        // Compute line diffs for gutter indicators
+        let hunks = compute_hunks(&head_content, &current_content);
+        let line_count = self.rope.len_lines().max(1);
+        self.line_diffs = compute_line_diffs(&hunks, line_count);
+
+        // Compute unified diff lines for diff mode
+        self.diff_lines = self.compute_unified_diff(&head_content, &current_content);
+    }
+
+    fn get_head_content(&self, repo: &Repository) -> Option<String> {
+        let workdir = repo.workdir()?;
+        let relative_path = self.file_path.strip_prefix(workdir).ok()?;
+
+        let head = repo.head().ok()?;
+        let tree = head.peel_to_tree().ok()?;
+        let entry = tree.get_path(relative_path).ok()?;
+        let blob = repo.find_blob(entry.id()).ok()?;
+
+        if blob.is_binary() {
+            return None;
+        }
+
+        String::from_utf8(blob.content().to_vec()).ok()
+    }
+
+    fn compute_unified_diff(&self, old_content: &str, new_content: &str) -> Vec<DiffLine> {
+        let diff = TextDiff::from_lines(old_content, new_content);
+        let mut lines = Vec::new();
+        let mut old_line = 1usize;
+        let mut new_line = 1usize;
+
+        for change in diff.iter_all_changes() {
+            let content = change.value().trim_end_matches('\n').to_string();
+            match change.tag() {
+                ChangeTag::Equal => {
+                    lines.push(DiffLine {
+                        tag: DiffLineTag::Equal,
+                        old_line_num: Some(old_line),
+                        new_line_num: Some(new_line),
+                        content,
+                    });
+                    old_line += 1;
+                    new_line += 1;
+                }
+                ChangeTag::Delete => {
+                    lines.push(DiffLine {
+                        tag: DiffLineTag::Delete,
+                        old_line_num: Some(old_line),
+                        new_line_num: None,
+                        content,
+                    });
+                    old_line += 1;
+                }
+                ChangeTag::Insert => {
+                    lines.push(DiffLine {
+                        tag: DiffLineTag::Insert,
+                        old_line_num: None,
+                        new_line_num: Some(new_line),
+                        content,
+                    });
+                    new_line += 1;
+                }
+            }
+        }
+
+        lines
     }
 }

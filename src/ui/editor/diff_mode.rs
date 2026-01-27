@@ -5,32 +5,7 @@
 //! - Colored backgrounds for added/deleted/unchanged lines
 //! - Collapsible sections for unchanged context
 
-use similar::ChangeTag;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiffLineTag {
-    Equal,
-    Insert,
-    Delete,
-}
-
-impl From<ChangeTag> for DiffLineTag {
-    fn from(tag: ChangeTag) -> Self {
-        match tag {
-            ChangeTag::Equal => DiffLineTag::Equal,
-            ChangeTag::Insert => DiffLineTag::Insert,
-            ChangeTag::Delete => DiffLineTag::Delete,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DiffLine {
-    pub tag: DiffLineTag,
-    pub old_line_num: Option<usize>,
-    pub new_line_num: Option<usize>,
-    pub content: String,
-}
+use crate::editor::{DiffLine, DiffLineTag};
 
 /// What's actually displayed - either a real diff line or a collapsed indicator
 #[derive(Debug, Clone)]

@@ -8,5 +8,4 @@ mod input;
 mod selection;
 mod view;
 
-pub use diff_mode::{DiffLine, DiffLineTag};
-pub use view::EditorView;
+pub use view::{EditorView, EditorViewOptions};

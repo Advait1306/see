@@ -3,23 +3,20 @@
 use crate::commands::{NextDiff, PrevDiff};
 use crate::git::{ChangedFile, FileStatus, GitStore, GitStoreEvent};
 use crate::stores::{WindowStore, WindowStoreEvent};
-use crate::ui::editor::{DiffLine, DiffLineTag, EditorView};
+use crate::ui::editor::{EditorView, EditorViewOptions};
 use crate::workspace::{Workspace, WorkspaceEvent};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;
 use gpui_component::{Icon, IconName, Sizable};
-use similar::{ChangeTag, TextDiff};
 use std::path::PathBuf;
 
 const HEADER_HEIGHT: f32 = 32.0;
 
 struct FileDiffData {
-    #[allow(dead_code)]
     path: PathBuf,
     status: FileStatus,
     display_name: String,
-    diff_lines: Vec<DiffLine>,
 }
 
 pub struct DiffList {
@@ -78,7 +75,7 @@ impl DiffList {
         self._git_store_subscription = workspace.map(|workspace| {
             let git_store = workspace.read(cx).git_store().clone();
             cx.subscribe(&git_store, |this, _store, event, cx| match event {
-                GitStoreEvent::ChangedFilesUpdated | GitStoreEvent::DiffUpdated(_) => {
+                GitStoreEvent::ChangedFilesUpdated => {
                     this.refresh_diffs(cx);
                 }
             })
@@ -116,13 +113,10 @@ impl DiffList {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| file.path.to_string_lossy().to_string());
 
-            let diff_lines = self.compute_diff_lines(&git_store, &file.path, cx);
-
             self.file_diffs.push(FileDiffData {
                 path: file.path,
                 status: file.status,
                 display_name,
-                diff_lines,
             });
         }
 
@@ -135,74 +129,9 @@ impl DiffList {
         cx.notify();
     }
 
-    fn compute_diff_lines(
-        &self,
-        git_store: &Entity<GitStore>,
-        file_path: &PathBuf,
-        cx: &App,
-    ) -> Vec<DiffLine> {
-        let store = git_store.read(cx);
-
-        let Some(workspace) = self.active_workspace(cx) else {
-            return Vec::new();
-        };
-
-        let workdir = workspace.read(cx).path.clone();
-
-        let relative_path = file_path.strip_prefix(&workdir).ok();
-        let Some(rel_path) = relative_path else {
-            return Vec::new();
-        };
-
-        let old_content = store.get_head_content_for_path(rel_path);
-        let new_content = std::fs::read_to_string(file_path).unwrap_or_default();
-
-        let diff = TextDiff::from_lines(&old_content, &new_content);
-        let mut all_lines: Vec<DiffLine> = Vec::new();
-        let mut old_line = 1usize;
-        let mut new_line = 1usize;
-
-        for change in diff.iter_all_changes() {
-            let content = change.value().trim_end_matches('\n').to_string();
-            match change.tag() {
-                ChangeTag::Equal => {
-                    all_lines.push(DiffLine {
-                        tag: DiffLineTag::Equal,
-                        old_line_num: Some(old_line),
-                        new_line_num: Some(new_line),
-                        content,
-                    });
-                    old_line += 1;
-                    new_line += 1;
-                }
-                ChangeTag::Delete => {
-                    all_lines.push(DiffLine {
-                        tag: DiffLineTag::Delete,
-                        old_line_num: Some(old_line),
-                        new_line_num: None,
-                        content,
-                    });
-                    old_line += 1;
-                }
-                ChangeTag::Insert => {
-                    all_lines.push(DiffLine {
-                        tag: DiffLineTag::Insert,
-                        old_line_num: None,
-                        new_line_num: Some(new_line),
-                        content,
-                    });
-                    new_line += 1;
-                }
-            }
-        }
-
-        all_lines
-    }
-
     fn rebuild_current_editor(&mut self, cx: &mut Context<Self>) {
         if let Some(file_diff) = self.file_diffs.get(self.current_index) {
             let new_path = file_diff.path.clone();
-            let diff_lines = file_diff.diff_lines.clone();
 
             // Preserve scroll position if showing the same file
             let preserved_scroll = if self.current_editor_path.as_ref() == Some(&new_path) {
@@ -214,7 +143,8 @@ impl DiffList {
             };
 
             let editor = cx.new(|cx| {
-                let mut editor = EditorView::new_diff_mode(diff_lines, cx);
+                let mut editor =
+                    EditorView::new(new_path.clone(), EditorViewOptions { diff_mode: true }, cx);
                 if let Some(scroll_offset) = preserved_scroll {
                     editor.scroll_offset = scroll_offset;
                 }

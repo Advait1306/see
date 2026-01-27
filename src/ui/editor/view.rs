@@ -1,12 +1,12 @@
 //! Editor view - main view struct and rendering
 
-use super::diff_mode::{compute_display_lines, DiffDisplayLine, DiffLine};
+use super::diff_mode::{compute_display_lines, DiffDisplayLine};
 use super::element::EditorElement;
 use super::input::handle_key;
 use super::selection::Selection;
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, PADDING};
-use crate::editor::{Buffer, BufferEvent, EditorState};
-use crate::git::{GitStore, GitStoreEvent};
+use crate::editor::{Buffer, BufferEvent, DiffLine, EditorState};
+use crate::stores::EditorStore;
 use crate::types::{EditorTabConfig, SelectionPhase, Tab, TabConfig};
 use gpui::prelude::*;
 use gpui::*;
@@ -23,10 +23,13 @@ pub(crate) struct DiffModeData {
     pub(crate) max_new_line_num: usize,
 }
 
+#[derive(Default)]
+pub struct EditorViewOptions {
+    pub diff_mode: bool,
+}
+
 pub struct EditorView {
-    pub(crate) buffer: Option<Entity<Buffer>>,
-    pub(crate) file_path: PathBuf,
-    pub(crate) git_store: Option<Entity<GitStore>>,
+    pub(crate) buffer: Entity<Buffer>,
     pub(crate) cursor_line: usize,
     pub(crate) cursor_col: usize,
     pub(crate) scroll_offset: usize,
@@ -42,133 +45,111 @@ pub struct EditorView {
     pub(crate) diff_mode: Option<DiffModeData>,
     _blink_task: Option<Task<()>>,
     _buffer_subscription: Option<Subscription>,
-    _git_subscription: Option<Subscription>,
 }
 
 impl EditorView {
-    pub fn new(
-        buffer: Entity<Buffer>,
-        file_path: PathBuf,
-        git_store: Entity<GitStore>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        // Subscribe to buffer events
-        let buffer_subscription = cx.subscribe(&buffer, |this, _buffer, event, cx| {
-            match event {
-                BufferEvent::Changed | BufferEvent::Saved | BufferEvent::ExternalChange => {
-                    // Ensure cursor is still valid after buffer changes
-                    this.ensure_cursor_valid(cx);
-                    // Request git diff update
-                    this.request_diff_update(cx);
-                    cx.notify();
-                }
+    pub fn new(file_path: PathBuf, options: EditorViewOptions, cx: &mut Context<Self>) -> Self {
+        // Get or create buffer from EditorStore
+        let editor_store = EditorStore::global(cx);
+        let buffer = editor_store
+            .update(cx, |store, cx| store.open_buffer(file_path.clone(), cx))
+            .expect("Failed to open buffer");
+
+        if options.diff_mode {
+            // Diff mode: read-only, shows unified diff
+            let diff_lines: Vec<DiffLine> = buffer.read(cx).diff_lines().to_vec();
+
+            let max_old = diff_lines
+                .iter()
+                .filter_map(|l| l.old_line_num)
+                .max()
+                .unwrap_or(0);
+            let max_new = diff_lines
+                .iter()
+                .filter_map(|l| l.new_line_num)
+                .max()
+                .unwrap_or(0);
+
+            let display_lines = compute_display_lines(&diff_lines, &[], DIFF_CONTEXT_LINES);
+
+            Self {
+                buffer,
+                cursor_line: 0,
+                cursor_col: 0,
+                scroll_offset: 0,
+                scroll_x: 0.0,
+                scroll_accumulator: 0.0,
+                focus_handle: cx.focus_handle(),
+                last_bounds: None,
+                last_line_number_width: 0.0,
+                cursor_visible: false,
+                last_cursor_move: std::time::Instant::now(),
+                selection: None,
+                selection_phase: SelectionPhase::None,
+                diff_mode: Some(DiffModeData {
+                    all_lines: diff_lines,
+                    display_lines,
+                    expanded_sections: Vec::new(),
+                    max_old_line_num: max_old,
+                    max_new_line_num: max_new,
+                }),
+                _blink_task: None,
+                _buffer_subscription: None,
             }
-        });
-
-        // Subscribe to git store events
-        let file_path_clone = file_path.clone();
-        let git_subscription = cx.subscribe(&git_store, move |this, _store, event, cx| {
-            if let GitStoreEvent::DiffUpdated(path) = event {
-                if path == &file_path_clone {
-                    this.update_line_diffs(cx);
+        } else {
+            // Normal mode: editable with cursor blink
+            let buffer_subscription = cx.subscribe(&buffer, |this, buffer, event, cx| {
+                match event {
+                    BufferEvent::Changed | BufferEvent::Saved | BufferEvent::ExternalChange => {
+                        this.ensure_cursor_valid(cx);
+                        buffer.update(cx, |buf, _cx| {
+                            buf.recompute_diffs();
+                        });
+                        cx.notify();
+                    }
                 }
-            }
-        });
+            });
 
-        // Start cursor blink timer
-        let blink_task = cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(530))
-                    .await;
+            let blink_task = cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(530))
+                        .await;
 
-                let result = cx.update(|cx| {
-                    this.update(cx, |this, cx| {
-                        // Only blink if 0.5 seconds has passed since last cursor movement
-                        let elapsed = this.last_cursor_move.elapsed();
-                        if elapsed >= std::time::Duration::from_millis(500) {
-                            this.cursor_visible = !this.cursor_visible;
-                            cx.notify();
-                        }
-                    })
-                });
+                    let result = cx.update(|cx| {
+                        this.update(cx, |this, cx| {
+                            let elapsed = this.last_cursor_move.elapsed();
+                            if elapsed >= std::time::Duration::from_millis(500) {
+                                this.cursor_visible = !this.cursor_visible;
+                                cx.notify();
+                            }
+                        })
+                    });
 
-                if result.is_err() {
-                    break; // Entity was dropped, stop blinking
+                    if result.is_err() {
+                        break;
+                    }
                 }
+            });
+
+            Self {
+                buffer,
+                cursor_line: 0,
+                cursor_col: 0,
+                scroll_offset: 0,
+                scroll_x: 0.0,
+                scroll_accumulator: 0.0,
+                focus_handle: cx.focus_handle(),
+                last_bounds: None,
+                last_line_number_width: 0.0,
+                cursor_visible: true,
+                last_cursor_move: std::time::Instant::now(),
+                selection: None,
+                selection_phase: SelectionPhase::None,
+                diff_mode: None,
+                _blink_task: Some(blink_task),
+                _buffer_subscription: Some(buffer_subscription),
             }
-        });
-
-        let view = Self {
-            buffer: Some(buffer),
-            file_path,
-            git_store: Some(git_store),
-            cursor_line: 0,
-            cursor_col: 0,
-            scroll_offset: 0,
-            scroll_x: 0.0,
-            scroll_accumulator: 0.0,
-            focus_handle: cx.focus_handle(),
-            last_bounds: None,
-            last_line_number_width: 0.0,
-            cursor_visible: true,
-            last_cursor_move: std::time::Instant::now(),
-            selection: None,
-            selection_phase: SelectionPhase::None,
-            diff_mode: None,
-            _blink_task: Some(blink_task),
-            _buffer_subscription: Some(buffer_subscription),
-            _git_subscription: Some(git_subscription),
-        };
-
-        // Initial diff computation
-        view.request_diff_update(cx);
-
-        view
-    }
-
-    /// Create an editor in diff mode (read-only, shows unified diff)
-    /// The editor will fill available space and virtualize content internally.
-    pub fn new_diff_mode(diff_lines: Vec<DiffLine>, cx: &mut Context<Self>) -> Self {
-        let max_old = diff_lines
-            .iter()
-            .filter_map(|l| l.old_line_num)
-            .max()
-            .unwrap_or(0);
-        let max_new = diff_lines
-            .iter()
-            .filter_map(|l| l.new_line_num)
-            .max()
-            .unwrap_or(0);
-
-        let display_lines = compute_display_lines(&diff_lines, &[], DIFF_CONTEXT_LINES);
-
-        Self {
-            buffer: None,
-            file_path: PathBuf::new(),
-            git_store: None,
-            cursor_line: 0,
-            cursor_col: 0,
-            scroll_offset: 0,
-            scroll_x: 0.0,
-            scroll_accumulator: 0.0,
-            focus_handle: cx.focus_handle(),
-            last_bounds: None,
-            last_line_number_width: 0.0,
-            cursor_visible: false,
-            last_cursor_move: std::time::Instant::now(),
-            selection: None,
-            selection_phase: SelectionPhase::None,
-            diff_mode: Some(DiffModeData {
-                all_lines: diff_lines,
-                display_lines,
-                expanded_sections: Vec::new(),
-                max_old_line_num: max_old,
-                max_new_line_num: max_new,
-            }),
-            _blink_task: None,
-            _buffer_subscription: None,
-            _git_subscription: None,
         }
     }
 
@@ -196,38 +177,12 @@ impl EditorView {
             .unwrap_or(0)
     }
 
-    fn request_diff_update(&self, cx: &mut Context<Self>) {
-        let Some(ref buffer) = self.buffer else { return };
-        let Some(ref git_store) = self.git_store else { return };
-        let content = buffer.read(cx).content();
-        let file_path = self.file_path.clone();
-        git_store.update(cx, |store, cx| {
-            store.compute_diff_for_file(&file_path, &content, cx);
-        });
-    }
-
-    fn update_line_diffs(&self, cx: &mut Context<Self>) {
-        let Some(ref buffer) = self.buffer else { return };
-        let Some(ref git_store) = self.git_store else { return };
-        let diffs = git_store
-            .read(cx)
-            .line_diffs_for_file(&self.file_path)
-            .cloned();
-        if let Some(diffs) = diffs {
-            buffer.update(cx, |buffer, _cx| {
-                buffer.set_line_diffs(diffs);
-            });
-        }
-        cx.notify();
-    }
-
-    pub fn buffer(&self) -> Option<&Entity<Buffer>> {
-        self.buffer.as_ref()
+    pub fn buffer(&self) -> &Entity<Buffer> {
+        &self.buffer
     }
 
     pub(crate) fn ensure_cursor_valid(&mut self, cx: &mut Context<Self>) {
-        let Some(ref buffer) = self.buffer else { return };
-        let buffer = buffer.read(cx);
+        let buffer = self.buffer.read(cx);
         let line_count = buffer.line_count();
 
         if line_count == 0 {
@@ -285,16 +240,14 @@ impl EditorView {
         };
 
         // Clamp to valid positions
-        let (line_count, line_len) = if let Some(ref buffer) = self.buffer {
-            let buf = buffer.read(cx);
-            let lc = buf.line_count();
-            let line = if lc > 0 { clicked_line.min(lc - 1) } else { 0 };
-            (lc, if lc > 0 { buf.line_len(line) } else { 0 })
-        } else if let Some(ref diff_data) = self.diff_mode {
+        let (line_count, line_len) = if let Some(ref diff_data) = self.diff_mode {
             let lc = diff_data.display_lines.len();
             (lc, 0) // No column clamping needed for diff mode
         } else {
-            (0, 0)
+            let buf = self.buffer.read(cx);
+            let lc = buf.line_count();
+            let line = if lc > 0 { clicked_line.min(lc - 1) } else { 0 };
+            (lc, if lc > 0 { buf.line_len(line) } else { 0 })
         };
 
         let line = if line_count > 0 {
@@ -321,9 +274,8 @@ impl EditorView {
             return None;
         }
 
-        let buffer = self.buffer.as_ref()?;
         let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
-        let buffer = buffer.read(cx);
+        let buffer = self.buffer.read(cx);
 
         let start_offset = buffer.line_col_to_offset(start_line, start_col);
         let end_offset = buffer.line_col_to_offset(end_line, end_col);
@@ -338,8 +290,6 @@ impl EditorView {
             return false;
         }
 
-        let Some(ref buffer) = self.buffer else { return false };
-
         let selection = match self.selection.take() {
             Some(s) if !s.is_empty() => s,
             _ => return false,
@@ -352,10 +302,10 @@ impl EditorView {
         );
 
         let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
-        let start_offset = buffer.read(cx).line_col_to_offset(start_line, start_col);
-        let end_offset = buffer.read(cx).line_col_to_offset(end_line, end_col);
+        let start_offset = self.buffer.read(cx).line_col_to_offset(start_line, start_col);
+        let end_offset = self.buffer.read(cx).line_col_to_offset(end_line, end_col);
 
-        buffer.update(cx, |buf, cx| {
+        self.buffer.update(cx, |buf, cx| {
             buf.delete_with_state(start_offset, end_offset, state_before, cx);
         });
 
@@ -445,11 +395,9 @@ impl Render for EditorView {
                         }
                     }).max().unwrap_or(0);
                     (diff_data.display_lines.len(), max_len)
-                } else if let Some(ref buffer) = this.buffer {
-                    let buffer = buffer.read(cx);
-                    (buffer.line_count(), buffer.max_line_len())
                 } else {
-                    (0, 0)
+                    let buffer = this.buffer.read(cx);
+                    (buffer.line_count(), buffer.max_line_len())
                 };
 
                 // Calculate visible area from stored bounds
@@ -600,10 +548,7 @@ impl Tab for EditorView {
         if self.diff_mode.is_some() {
             return "Diff".to_string();
         }
-        let Some(ref buffer) = self.buffer else {
-            return "Untitled".to_string();
-        };
-        let buffer = buffer.read(cx);
+        let buffer = self.buffer.read(cx);
         let name = buffer.file_name();
         if buffer.is_dirty() {
             format!("{}*", name)
@@ -613,10 +558,7 @@ impl Tab for EditorView {
     }
 
     fn to_config(&self, cx: &App) -> TabConfig {
-        let Some(ref buffer) = self.buffer else {
-            return TabConfig::Editor(EditorTabConfig { path: PathBuf::new() });
-        };
-        let path = buffer.read(cx).file_path().clone();
+        let path = self.buffer.read(cx).file_path().clone();
         TabConfig::Editor(EditorTabConfig { path })
     }
 }

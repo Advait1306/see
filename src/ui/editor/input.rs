@@ -18,10 +18,8 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
         return;
     }
 
-    // Buffer is required for editing - clone to avoid borrow issues
-    let Some(buffer) = view.buffer.clone() else {
-        return;
-    };
+    // Clone buffer to avoid borrow issues
+    let buffer = view.buffer.clone();
 
     // Reset cursor blink on any key press
     view.reset_cursor_blink();
@@ -223,7 +221,7 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
 }
 
 pub(crate) fn insert_text(view: &mut EditorView, text: &str, cx: &mut Context<EditorView>) {
-    let Some(buffer) = view.buffer.clone() else { return };
+    let buffer = view.buffer.clone();
 
     // Delete selection if any (this also positions cursor at selection start)
     view.delete_selection(cx);
@@ -248,7 +246,7 @@ pub(crate) fn insert_text(view: &mut EditorView, text: &str, cx: &mut Context<Ed
 }
 
 fn delete_backward(view: &mut EditorView, cx: &mut Context<EditorView>) {
-    let Some(buffer) = view.buffer.clone() else { return };
+    let buffer = view.buffer.clone();
 
     let state_before = EditorState::new((view.cursor_line, view.cursor_col));
     if view.cursor_col > 0 {
@@ -273,7 +271,7 @@ fn delete_backward(view: &mut EditorView, cx: &mut Context<EditorView>) {
 }
 
 fn delete_forward(view: &mut EditorView, cx: &mut Context<EditorView>) {
-    let Some(buffer) = view.buffer.clone() else { return };
+    let buffer = view.buffer.clone();
 
     let state_before = EditorState::new((view.cursor_line, view.cursor_col));
     let line_len = buffer.read(cx).line_len(view.cursor_line);
@@ -296,7 +294,7 @@ fn delete_forward(view: &mut EditorView, cx: &mut Context<EditorView>) {
 }
 
 pub(crate) fn move_word_left(view: &mut EditorView, cx: &mut Context<EditorView>) {
-    let Some(buffer) = view.buffer.clone() else { return };
+    let buffer = view.buffer.clone();
 
     let buffer = buffer.read(cx);
     let mut offset = buffer.line_col_to_offset(view.cursor_line, view.cursor_col);
@@ -368,7 +366,7 @@ pub(crate) fn move_word_left(view: &mut EditorView, cx: &mut Context<EditorView>
 }
 
 pub(crate) fn move_word_right(view: &mut EditorView, cx: &mut Context<EditorView>) {
-    let Some(buffer) = view.buffer.clone() else { return };
+    let buffer = view.buffer.clone();
 
     let buffer = buffer.read(cx);
     let total_chars = buffer.total_chars();
