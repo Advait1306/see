@@ -86,7 +86,7 @@ pub struct Buffer {
 impl EventEmitter<BufferEvent> for Buffer {}
 
 impl Buffer {
-    pub fn load(path: PathBuf, _cx: &mut Context<Self>) -> io::Result<Self> {
+    pub fn load(path: PathBuf, cx: &mut Context<Self>) -> io::Result<Self> {
         let file = fs::File::open(&path)?;
         let mtime = file.metadata()?.modified().ok();
         let reader = BufReader::new(file);
@@ -110,7 +110,36 @@ impl Buffer {
         // Compute initial diffs
         buffer.recompute_diffs();
 
+        // Start polling for external changes
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+
+                let should_stop = this
+                    .update(cx, |buffer, cx| {
+                        buffer.check_and_reload_if_changed(cx);
+                    })
+                    .is_err();
+
+                if should_stop {
+                    break;
+                }
+            }
+        })
+        .detach();
+
         Ok(buffer)
+    }
+
+    fn check_and_reload_if_changed(&mut self, cx: &mut Context<Self>) {
+        if self.check_external_changes() {
+            cx.emit(BufferEvent::ExternalChange);
+            if !self.is_dirty {
+                let _ = self.reload(cx);
+            }
+        }
     }
 
     pub fn save(&mut self, cx: &mut Context<Self>) -> io::Result<()> {

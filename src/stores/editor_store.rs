@@ -1,9 +1,8 @@
-use crate::editor::buffer::{Buffer, BufferEvent};
+use crate::editor::buffer::Buffer;
 use gpui::prelude::*;
 use gpui::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub enum EditorStoreEvent {
@@ -22,7 +21,7 @@ impl EventEmitter<EditorStoreEvent> for EditorStore {}
 
 impl EditorStore {
     pub fn init(cx: &mut App) {
-        let store = cx.new(|cx| Self::new(cx));
+        let store = cx.new(|_cx| Self::new());
         cx.set_global(GlobalEditorStore(store));
     }
 
@@ -30,20 +29,7 @@ impl EditorStore {
         cx.global::<GlobalEditorStore>().0.clone()
     }
 
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(500))
-                    .await;
-
-                let _ = this.update(cx, |store, cx| {
-                    store.check_all_external_changes(cx);
-                });
-            }
-        })
-        .detach();
-
+    pub fn new() -> Self {
         Self {
             buffers: HashMap::new(),
         }
@@ -66,21 +52,5 @@ impl EditorStore {
 
         cx.emit(EditorStoreEvent::BufferOpened);
         Some(buffer)
-    }
-
-    fn check_all_external_changes(&mut self, cx: &mut Context<Self>) {
-        for (_path, buffer) in &self.buffers {
-            let has_changes = buffer.read(cx).check_external_changes();
-            let is_dirty = buffer.read(cx).is_dirty();
-
-            if has_changes {
-                buffer.update(cx, |buf, cx| {
-                    cx.emit(BufferEvent::ExternalChange);
-                    if !is_dirty {
-                        let _ = buf.reload(cx);
-                    }
-                });
-            }
-        }
     }
 }
