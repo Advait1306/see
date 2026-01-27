@@ -60,24 +60,24 @@ impl DiffList {
     }
 
     fn subscribe_to_active_workspace(&mut self, cx: &mut Context<Self>) {
-        let workspace = self.active_workspace(cx);
+        let Some(workspace) = self.active_workspace(cx) else {
+            self._workspace_subscription = None;
+            self._git_store_subscription = None;
+            return;
+        };
 
-        self._workspace_subscription = workspace.as_ref().map(|workspace| {
-            cx.subscribe(workspace, |this, _workspace, event, cx| {
-                if matches!(event, WorkspaceEvent::FileTreeChanged) {
-                    this.refresh_diffs(cx);
-                }
-            })
-        });
+        self._workspace_subscription = Some(cx.subscribe(&workspace, |this, _workspace, event, cx| {
+            if matches!(event, WorkspaceEvent::FileTreeChanged) {
+                this.refresh_diffs(cx);
+            }
+        }));
 
-        self._git_store_subscription = workspace.map(|workspace| {
-            let git_store = workspace.read(cx).git_store().clone();
-            cx.subscribe(&git_store, |this, _store, event, cx| match event {
-                GitStoreEvent::ChangedFilesUpdated => {
-                    this.refresh_diffs(cx);
-                }
-            })
-        });
+        let git_store = workspace.read(cx).git_store().clone();
+        self._git_store_subscription = Some(cx.subscribe(&git_store, |this, _store, event, cx| {
+            if matches!(event, GitStoreEvent::ChangedFilesUpdated) {
+                this.refresh_diffs(cx);
+            }
+        }));
     }
 
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
