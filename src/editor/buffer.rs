@@ -1,5 +1,5 @@
 use crate::git::{compute_hunks, compute_line_diffs, LineDiff};
-use git2::Repository;
+use git2::{Oid, Repository};
 use gpui::prelude::*;
 use gpui::*;
 use ropey::Rope;
@@ -81,6 +81,8 @@ pub struct Buffer {
     diff_lines: Vec<DiffLine>,
     /// Cached git repository for this file
     repository: Option<Arc<Repository>>,
+    /// Tracked HEAD commit for detecting when diffs need recomputing
+    head_oid: Option<Oid>,
 }
 
 impl EventEmitter<BufferEvent> for Buffer {}
@@ -95,6 +97,11 @@ impl Buffer {
         // Try to discover git repository for this file
         let repository = Repository::discover(&path).ok().map(Arc::new);
 
+        let head_oid = repository
+            .as_ref()
+            .and_then(|repo| repo.head().ok()?.peel_to_commit().ok())
+            .map(|c| c.id());
+
         let mut buffer = Self {
             rope,
             file_path: path,
@@ -105,6 +112,7 @@ impl Buffer {
             line_diffs: Vec::new(),
             diff_lines: Vec::new(),
             repository,
+            head_oid,
         };
 
         // Compute initial diffs
@@ -140,6 +148,26 @@ impl Buffer {
                 let _ = self.reload(cx);
             }
         }
+
+        // Check if HEAD changed (e.g., after a commit) and recompute diffs
+        if self.check_head_changed() {
+            self.recompute_diffs();
+            cx.notify();
+        }
+    }
+
+    fn check_head_changed(&mut self) -> bool {
+        let current_head = self
+            .repository
+            .as_ref()
+            .and_then(|repo| repo.head().ok()?.peel_to_commit().ok())
+            .map(|c| c.id());
+
+        if current_head != self.head_oid {
+            self.head_oid = current_head;
+            return true;
+        }
+        false
     }
 
     pub fn save(&mut self, cx: &mut Context<Self>) -> io::Result<()> {
