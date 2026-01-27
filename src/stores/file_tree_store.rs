@@ -103,11 +103,6 @@ impl FileTreeStore {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn expanded_paths(&self) -> &HashSet<PathBuf> {
-        &self.expanded_paths
-    }
-
     pub fn toggle_expanded(&mut self, path: &PathBuf, cx: &mut Context<Self>) {
         if self.expanded_paths.contains(path) {
             self.expanded_paths.remove(path);

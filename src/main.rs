@@ -39,7 +39,7 @@ fn main() {
 
         EditorStore::init(cx);
         TerminalStore::init(cx);
-        let workspace_store = WorkspaceStore::init(cx);
+        WorkspaceStore::init(cx);
 
         cx.open_window(
             WindowOptions {
@@ -57,24 +57,17 @@ fn main() {
                 ..Default::default()
             },
             |window, cx| {
-                // Create WindowStore for this window
-                let window_store = cx.new(|cx| WindowStore::new(workspace_store.clone(), cx));
+                // Ensure at least one workspace exists
+                let workspace_store = WorkspaceStore::global(cx);
+                if workspace_store.read(cx).is_empty() {
+                    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
+                    workspace_store.update(cx, |store, cx| {
+                        store.add_workspace("Home".to_string(), home, cx);
+                    });
+                }
 
-                let window_view = cx.new(|cx| {
-                    let window_view =
-                        WindowView::new(workspace_store.clone(), window_store.clone(), window, cx);
-
-                    // Ensure at least one workspace exists
-                    if window_view.workspace_store().read(cx).is_empty() {
-                        let home =
-                            dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
-                        window_view.workspace_store().update(cx, |store, cx| {
-                            store.add_workspace("Home".to_string(), home, cx);
-                        });
-                    }
-
-                    window_view
-                });
+                let window_store = cx.new(|cx| WindowStore::new(cx));
+                let window_view = cx.new(|cx| WindowView::new(window_store.clone(), window, cx));
                 cx.new(|cx| Root::new(window_view, window, cx))
             },
         )

@@ -85,7 +85,7 @@ impl DiffList {
     }
 
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
-        self.window_store.read(cx).active_workspace(cx).cloned()
+        self.window_store.read(cx).active_workspace(cx)
     }
 
     fn active_git_store(&self, cx: &App) -> Option<Entity<GitStore>> {

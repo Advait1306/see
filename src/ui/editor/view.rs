@@ -193,14 +193,6 @@ impl EditorView {
         self.diff_mode.is_some()
     }
 
-    #[allow(dead_code)]
-    pub fn diff_line_count(&self) -> usize {
-        self.diff_mode
-            .as_ref()
-            .map(|d| d.display_lines.len())
-            .unwrap_or(0)
-    }
-
     pub(crate) fn ensure_cursor_valid(&mut self, cx: &mut Context<Self>) {
         let Some(buffer) = &self.buffer else { return };
         let buffer = buffer.read(cx);
@@ -287,24 +279,6 @@ impl EditorView {
     pub(crate) fn clear_selection(&mut self) {
         self.selection = None;
         self.selection_phase = SelectionPhase::None;
-    }
-
-    /// Get selected text from buffer
-    #[allow(dead_code)]
-    pub(crate) fn selection_to_string(&self, cx: &App) -> Option<String> {
-        let buffer = self.buffer.as_ref()?;
-        let selection = self.selection.as_ref()?;
-        if selection.is_empty() {
-            return None;
-        }
-
-        let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
-        let buffer = buffer.read(cx);
-
-        let start_offset = buffer.line_col_to_offset(start_line, start_col);
-        let end_offset = buffer.line_col_to_offset(end_line, end_col);
-
-        buffer.slice(start_offset, end_offset)
     }
 
     /// Delete selected text and return whether anything was deleted

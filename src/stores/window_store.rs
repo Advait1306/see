@@ -27,7 +27,6 @@ pub struct WindowUiState {
 }
 
 pub struct WindowStore {
-    workspace_store: Entity<WorkspaceStore>,
     active_workspace_id: Option<String>,
     sidebar_collapsed: bool,
     right_sidebar: RightSidebarPanel,
@@ -37,8 +36,9 @@ pub struct WindowStore {
 impl EventEmitter<WindowStoreEvent> for WindowStore {}
 
 impl WindowStore {
-    pub fn new(workspace_store: Entity<WorkspaceStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         let ui_state: WindowUiState = config::load_json(&config::ui_state_path());
+        let workspace_store = WorkspaceStore::global(cx);
 
         // Determine initial active workspace:
         // 1. Try saved active_workspace_id if it still exists
@@ -62,7 +62,6 @@ impl WindowStore {
         });
 
         Self {
-            workspace_store,
             active_workspace_id,
             sidebar_collapsed: ui_state.sidebar_collapsed,
             right_sidebar: ui_state.right_sidebar,
@@ -74,7 +73,8 @@ impl WindowStore {
         match event {
             WorkspaceStoreEvent::WorkspacesChanged => {
                 if let Some(id) = &self.active_workspace_id {
-                    let store = self.workspace_store.read(cx);
+                    let store = WorkspaceStore::global(cx);
+                    let store = store.read(cx);
                     if store.get_workspace(id).is_none() {
                         self.active_workspace_id = store.first_workspace_id().cloned();
                         self.save();
@@ -100,16 +100,15 @@ impl WindowStore {
         self.active_workspace_id.as_ref()
     }
 
-    pub fn active_workspace<'a>(&'a self, cx: &'a App) -> Option<&'a Entity<Workspace>> {
-        self.active_workspace_id.as_ref().and_then(|id| {
-            self.workspace_store.read(cx).get_workspace(id)
-        })
+    pub fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
+        let id = self.active_workspace_id.as_ref()?;
+        WorkspaceStore::global(cx).read(cx).get_workspace(id).cloned()
     }
 
     pub fn set_active_workspace(&mut self, id: String, cx: &mut Context<Self>) {
         if self.active_workspace_id.as_ref() != Some(&id) {
             // Verify workspace exists
-            if self.workspace_store.read(cx).get_workspace(&id).is_some() {
+            if WorkspaceStore::global(cx).read(cx).get_workspace(&id).is_some() {
                 self.active_workspace_id = Some(id);
                 self.save();
                 cx.emit(WindowStoreEvent::ActiveWorkspaceChanged);
@@ -119,8 +118,7 @@ impl WindowStore {
     }
 
     pub fn next_workspace(&mut self, cx: &mut Context<Self>) {
-        let ids: Vec<String> = self
-            .workspace_store
+        let ids: Vec<String> = WorkspaceStore::global(cx)
             .read(cx)
             .workspace_ids()
             .cloned()
@@ -136,8 +134,7 @@ impl WindowStore {
     }
 
     pub fn prev_workspace(&mut self, cx: &mut Context<Self>) {
-        let ids: Vec<String> = self
-            .workspace_store
+        let ids: Vec<String> = WorkspaceStore::global(cx)
             .read(cx)
             .workspace_ids()
             .cloned()

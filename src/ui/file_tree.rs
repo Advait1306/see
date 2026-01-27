@@ -176,7 +176,7 @@ impl FileTree {
     }
 
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
-        self.window_store.read(cx).active_workspace(cx).cloned()
+        self.window_store.read(cx).active_workspace(cx)
     }
 
     fn file_tree_entries(&self, cx: &App) -> Vec<FileEntry> {

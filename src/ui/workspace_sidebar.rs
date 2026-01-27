@@ -5,7 +5,6 @@ use gpui_component::Side;
 use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
 
 pub struct WorkspaceSidebar {
-    workspace_store: Entity<WorkspaceStore>,
     window_store: Entity<WindowStore>,
     focus_handle: FocusHandle,
     _workspace_store_subscription: Subscription,
@@ -14,22 +13,19 @@ pub struct WorkspaceSidebar {
 
 impl WorkspaceSidebar {
     pub fn new(
-        workspace_store: Entity<WorkspaceStore>,
         window_store: Entity<WindowStore>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let workspace_store = WorkspaceStore::global(cx);
         let workspace_store_sub = cx.subscribe(&workspace_store, |_this, _store, event, cx| {
             match event {
                 WorkspaceStoreEvent::WorkspacesChanged => {
                     cx.notify();
                 }
                 WorkspaceStoreEvent::WorkspaceUpdated(_) => {
-                    // Workspace updates (name changes, etc.) are visible in the sidebar list
                     cx.notify();
                 }
-                WorkspaceStoreEvent::PaneLayoutChanged(_) => {
-                    // Pane layout changes don't affect the workspace sidebar
-                }
+                WorkspaceStoreEvent::PaneLayoutChanged(_) => {}
             }
         });
 
@@ -38,14 +34,11 @@ impl WorkspaceSidebar {
                 WindowStoreEvent::ActiveWorkspaceChanged => {
                     cx.notify();
                 }
-                WindowStoreEvent::UiStateChanged => {
-                    // UI state changes don't affect the workspace sidebar content
-                }
+                WindowStoreEvent::UiStateChanged => {}
             }
         });
 
         Self {
-            workspace_store,
             window_store,
             focus_handle: cx.focus_handle(),
             _workspace_store_subscription: workspace_store_sub,
@@ -60,8 +53,6 @@ impl WorkspaceSidebar {
     }
 
     fn add_workspace(&self, cx: &mut Context<Self>) {
-        let workspace_store = self.workspace_store.clone();
-
         cx.spawn(async move |_this, cx| {
             let path = rfd::AsyncFileDialog::new()
                 .set_title("Select Workspace Folder")
@@ -76,7 +67,7 @@ impl WorkspaceSidebar {
                     .unwrap_or_else(|| "Workspace".to_string());
 
                 let _ = cx.update(|cx| {
-                    workspace_store.update(cx, |store, cx| {
+                    WorkspaceStore::global(cx).update(cx, |store, cx| {
                         store.add_workspace(name, path, cx);
                     });
                 });
@@ -88,7 +79,8 @@ impl WorkspaceSidebar {
 
 impl Render for WorkspaceSidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ws_store = self.workspace_store.read(cx);
+        let ws_store = WorkspaceStore::global(cx);
+        let ws_store = ws_store.read(cx);
         let active_id = self.window_store.read(cx).active_workspace_id().cloned();
         let workspaces: Vec<(String, String, bool)> = ws_store
             .workspaces()

@@ -1,6 +1,6 @@
 use crate::commands::*;
 use crate::config;
-use crate::stores::{PaneStore, RightSidebarPanel, WindowStore, Workspace, WorkspaceStore};
+use crate::stores::{PaneStore, RightSidebarPanel, WindowStore, Workspace};
 use crate::ui::diff_list::DiffList;
 use crate::ui::file_tree::FileTree;
 use crate::ui::pane_group::PaneGroupView;
@@ -11,7 +11,6 @@ use gpui_component::theme::ActiveTheme;
 use gpui_component::{Icon, IconName, Sizable};
 
 pub struct WindowView {
-    workspace_store: Entity<WorkspaceStore>,
     window_store: Entity<WindowStore>,
     workspace_sidebar: Entity<WorkspaceSidebar>,
     file_tree: Entity<FileTree>,
@@ -21,18 +20,16 @@ pub struct WindowView {
 
 impl WindowView {
     pub fn new(
-        workspace_store: Entity<WorkspaceStore>,
         window_store: Entity<WindowStore>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let workspace_sidebar =
-            cx.new(|cx| WorkspaceSidebar::new(workspace_store.clone(), window_store.clone(), cx));
+            cx.new(|cx| WorkspaceSidebar::new(window_store.clone(), cx));
         let file_tree = cx.new(|cx| FileTree::new(window_store.clone(), cx));
         let diff_list = cx.new(|cx| DiffList::new(window_store.clone(), cx));
 
         Self {
-            workspace_store,
             window_store,
             workspace_sidebar,
             file_tree,
@@ -41,12 +38,8 @@ impl WindowView {
         }
     }
 
-    pub fn workspace_store(&self) -> &Entity<WorkspaceStore> {
-        &self.workspace_store
-    }
-
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
-        self.window_store.read(cx).active_workspace(cx).cloned()
+        self.window_store.read(cx).active_workspace(cx)
     }
 
     fn active_pane_store(&self, cx: &App) -> Option<Entity<PaneStore>> {
