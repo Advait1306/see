@@ -24,8 +24,8 @@ pub enum GitStoreEvent {
 
 // TODO: This could potentially be a global store which is keyed to the path
 pub struct GitStore {
-    repository: Option<Arc<Repository>>,
-    workdir: Option<PathBuf>,
+    repository: Arc<Repository>,
+    workdir: PathBuf,
     changed_files: Vec<ChangedFile>,
     _poll_task: Option<Task<()>>,
 }
@@ -33,29 +33,28 @@ pub struct GitStore {
 impl EventEmitter<GitStoreEvent> for GitStore {}
 
 impl GitStore {
-    pub fn new(path: PathBuf, cx: &mut Context<Self>) -> Self {
-        let (repository, workdir) = match Repository::discover(&path) {
-            Ok(repo) => {
-                let workdir = repo.workdir().map(|p| p.to_path_buf());
-                (Some(Arc::new(repo)), workdir)
-            }
+    pub fn try_new(path: &PathBuf) -> Option<Self> {
+        let repo = match Repository::discover(path) {
+            Ok(repo) => repo,
             Err(e) => {
                 log::debug!("No git repository found at {:?}: {}", path, e);
-                (None, None)
+                return None;
             }
         };
 
-        let mut store = Self {
-            repository,
+        let workdir = repo.workdir()?.to_path_buf();
+
+        Some(Self {
+            repository: Arc::new(repo),
             workdir,
             changed_files: Vec::new(),
             _poll_task: None,
-        };
+        })
+    }
 
-        store.refresh_changed_files(cx);
-
-        // Start polling for git status changes
-        store._poll_task = Some(cx.spawn(async move |this, cx| {
+    pub fn with_polling(mut self, cx: &mut Context<Self>) -> Self {
+        self.refresh_changed_files(cx);
+        self._poll_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(1000))
@@ -65,15 +64,10 @@ impl GitStore {
                 });
             }
         }));
-
-        store
+        self
     }
 
     pub fn refresh_changed_files(&mut self, cx: &mut Context<Self>) {
-        let Some(repo) = &self.repository else {
-            return;
-        };
-
         let mut opts = StatusOptions::new();
         opts.include_untracked(true)
             .recurse_untracked_dirs(true)
@@ -82,7 +76,7 @@ impl GitStore {
 
         let mut new_files = Vec::new();
 
-        if let Ok(statuses) = repo.statuses(Some(&mut opts)) {
+        if let Ok(statuses) = self.repository.statuses(Some(&mut opts)) {
             for entry in statuses.iter() {
                 let status = entry.status();
                 let file_status = if status.is_wt_new() || status.is_index_new() {
@@ -100,12 +94,7 @@ impl GitStore {
                 };
 
                 if let Some(path) = entry.path() {
-                    let full_path = if let Some(workdir) = &self.workdir {
-                        workdir.join(path)
-                    } else {
-                        PathBuf::from(path)
-                    };
-
+                    let full_path = self.workdir.join(path);
                     new_files.push(ChangedFile {
                         path: full_path,
                         status: file_status,

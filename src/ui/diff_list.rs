@@ -72,12 +72,16 @@ impl DiffList {
             }
         }));
 
-        let git_store = workspace.read(cx).git_store().clone();
-        self._git_store_subscription = Some(cx.subscribe(&git_store, |this, _store, event, cx| {
-            if matches!(event, GitStoreEvent::ChangedFilesUpdated) {
-                this.refresh_diffs(cx);
-            }
-        }));
+        let git_store = workspace.read(cx).git_store().cloned();
+        self._git_store_subscription = if let Some(git_store) = git_store {
+            Some(cx.subscribe(&git_store, |this, _store, event, cx| {
+                if matches!(event, GitStoreEvent::ChangedFilesUpdated) {
+                    this.refresh_diffs(cx);
+                }
+            }))
+        } else {
+            None
+        };
     }
 
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
@@ -85,8 +89,14 @@ impl DiffList {
     }
 
     fn active_git_store(&self, cx: &App) -> Option<Entity<GitStore>> {
-        self.active_workspace(cx)
-            .map(|ws| ws.read(cx).git_store().clone())
+        let Some(workspace) = self.active_workspace(cx) else {
+            return None;
+        };
+        workspace.read(cx).git_store().cloned()
+    }
+
+    fn has_git_store(&self, cx: &App) -> bool {
+        self.active_git_store(cx).is_some()
     }
 
     fn refresh_diffs(&mut self, cx: &mut Context<Self>) {
@@ -189,6 +199,7 @@ impl Render for DiffList {
         let warning_color = theme.warning;
         let danger_color = theme.danger;
 
+        let has_git_store = self.has_git_store(cx);
         let total = self.total_changes();
         let current = self.current_index;
         let has_prev = current > 0;
@@ -326,6 +337,11 @@ impl Render for DiffList {
                         el.child(editor)
                     })
                     .when(self.current_editor.is_none(), |el| {
+                        let message = if has_git_store {
+                            "No changes"
+                        } else {
+                            "No git repository in workspace"
+                        };
                         el.flex()
                             .items_center()
                             .justify_center()
@@ -333,7 +349,7 @@ impl Render for DiffList {
                                 div()
                                     .text_sm()
                                     .text_color(muted_color)
-                                    .child("No changes"),
+                                    .child(message),
                             )
                     }),
             )

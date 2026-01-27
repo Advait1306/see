@@ -18,7 +18,7 @@ pub struct Workspace {
     pub name: String,
     pub path: PathBuf,
     file_tree_store: Entity<FileTreeStore>,
-    git_store: Entity<GitStore>,
+    git_store: Option<Entity<GitStore>>,
     pane_store: Entity<PaneStore>,
     pane_group_view: Entity<PaneGroupView>,
     _subscriptions: Vec<Subscription>,
@@ -27,7 +27,11 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(id: String, name: String, path: PathBuf, cx: &mut Context<Self>) -> Self {
         let file_tree_store = cx.new(|cx| FileTreeStore::new(id.clone(), path.clone(), cx));
-        let git_store = cx.new(|cx| GitStore::new(path.clone(), cx));
+        let git_store = if let Some(store) = GitStore::try_new(&path) {
+            Some(cx.new(|cx| store.with_polling(cx)))
+        } else {
+            None
+        };
 
         let pane_store = {
             let id = id.clone();
@@ -73,8 +77,8 @@ impl Workspace {
         &self.file_tree_store
     }
 
-    pub fn git_store(&self) -> &Entity<GitStore> {
-        &self.git_store
+    pub fn git_store(&self) -> Option<&Entity<GitStore>> {
+        self.git_store.as_ref()
     }
 
     pub fn pane_store(&self) -> &Entity<PaneStore> {
