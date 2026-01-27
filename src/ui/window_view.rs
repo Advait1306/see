@@ -85,17 +85,23 @@ impl WindowView {
         self.window_store.read(cx).sidebar_collapsed()
     }
 
-    fn render_right_sidebar(&self, panel: RightSidebarPanel, cx: &Context<Self>) -> impl IntoElement {
+    fn render_right_sidebar(&self, panel: RightSidebarPanel, sidebar_collapsed: bool, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
-        let width = match panel {
-            RightSidebarPanel::DiffList => 500.0,
-            _ => 250.0,
+        // Width percentages based on ratios:
+        // With sidebar:    DiffList (2:5:5), FileTree (1:4:1)
+        // Without sidebar: DiffList (0:5:5), FileTree (0:5:1)
+        let width_pct = match (panel, sidebar_collapsed) {
+            (RightSidebarPanel::DiffList, false) => 42.0,  // 5/12 ≈ 42%
+            (RightSidebarPanel::DiffList, true) => 50.0,   // 5/10 = 50%
+            (RightSidebarPanel::FileTree, false) => 17.0,  // 1/6 ≈ 17%
+            (RightSidebarPanel::FileTree, true) => 17.0,   // 1/6 ≈ 17%
+            (RightSidebarPanel::Hidden, _) => 0.0,
         };
 
         div()
             .id("right-sidebar")
-            .w(px(width))
+            .w(relative(width_pct / 100.0))
             .h_full()
             .flex_shrink_0()
             .border_l_1()
@@ -275,7 +281,20 @@ impl Render for WindowView {
                     ),
             )
             // Main content area
-            .child(
+            // Ratios - DiffList: 2:5:5, FileTree: 1:4:1, Hidden: 1:6:0
+            .child({
+                // Width percentages based on ratios:
+                // With sidebar:    DiffList (2:5:5), FileTree (1:4:1), Hidden (1:5:0)
+                // Without sidebar: DiffList (0:5:5), FileTree (0:5:1), Hidden (0:6:0)
+                let (sidebar_pct, main_pct) = match (right_sidebar, sidebar_collapsed) {
+                    (RightSidebarPanel::DiffList, false) => (17.0, 41.0),   // 2:5:5 → 2/12, 5/12
+                    (RightSidebarPanel::DiffList, true) => (0.0, 50.0),     // 0:5:5 → 5/10
+                    (RightSidebarPanel::FileTree, false) => (17.0, 66.0),   // 1:4:1 → 1/6, 4/6
+                    (RightSidebarPanel::FileTree, true) => (0.0, 83.0),     // 0:5:1 → 5/6
+                    (RightSidebarPanel::Hidden, false) => (17.0, 83.0),     // 1:5:0 → 1/6, 5/6
+                    (RightSidebarPanel::Hidden, true) => (0.0, 100.0),      // 0:6:0 → 6/6
+                };
+
                 div()
                     .id("content-area")
                     .flex_1()
@@ -284,14 +303,21 @@ impl Render for WindowView {
                     .flex()
                     .flex_row()
                     .when(!sidebar_collapsed, |el| {
-                        el.child(self.workspace_sidebar.clone())
+                        el.child(
+                            div()
+                                .id("workspace-sidebar-container")
+                                .w(relative(sidebar_pct / 100.0))
+                                .h_full()
+                                .flex_shrink_0()
+                                .child(self.workspace_sidebar.clone()),
+                        )
                     })
                     .child(
                         div()
                             .id("main-content")
-                            .flex_1()
+                            .w(relative(main_pct / 100.0))
                             .h_full()
-                            .min_w_0()
+                            .flex_shrink_0()
                             .flex()
                             .flex_col()
                             .child(
@@ -313,9 +339,9 @@ impl Render for WindowView {
                             ),
                     )
                     .when(right_sidebar != RightSidebarPanel::Hidden, |el| {
-                        el.child(self.render_right_sidebar(right_sidebar, cx))
-                    }),
-            )
+                        el.child(self.render_right_sidebar(right_sidebar, sidebar_collapsed, cx))
+                    })
+            })
     }
 }
 

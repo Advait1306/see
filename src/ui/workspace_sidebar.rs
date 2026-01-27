@@ -101,6 +101,7 @@ impl Render for WorkspaceSidebar {
 
         div()
             .id("workspace-sidebar")
+            .size_full()
             .track_focus(&self.focus_handle)
             .child(
                 Sidebar::new(Side::Left).child(
