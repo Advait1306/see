@@ -68,6 +68,10 @@ fn main() {
 
                 let window_store = cx.new(|cx| WindowStore::new(cx));
                 let window_view = cx.new(|cx| WindowView::new(window_store.clone(), window, cx));
+
+                // Set initial focus on the active content
+                window_view.read(cx).focus_active_content(window, cx);
+
                 cx.new(|cx| Root::new(window_view, window, cx))
             },
         )

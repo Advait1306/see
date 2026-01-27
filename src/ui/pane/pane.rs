@@ -71,6 +71,12 @@ impl Pane {
         self.tabs.get(self.active_index)
     }
 
+    pub fn focus_active_tab(&self, window: &mut Window, cx: &App) {
+        if let Some(tab) = self.active_tab() {
+            tab.focus(window, cx);
+        }
+    }
+
     pub fn select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.tabs.len() {
             self.active_index = index;
@@ -154,8 +160,9 @@ impl Pane {
                         muted_color
                     })
                     .text_xs()
-                    .on_click(cx.listener(move |this, _, _window, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.select_tab(idx, cx);
+                        this.focus_active_tab(window, cx);
                     }))
                     .on_drag(
                         DraggedTab {
@@ -177,8 +184,9 @@ impl Pane {
                     .hover(|el| el.bg(border_color))
                     .text_color(muted_color)
                     .text_xs()
-                    .on_click(cx.listener(|this, _, _window, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.add_terminal(cx);
+                        this.focus_active_tab(window, cx);
                     }))
                     .child("+"),
             )
@@ -308,8 +316,6 @@ impl Render for Pane {
             .flex_col()
             .relative()
             .bg(theme.background)
-            .border_1()
-            .border_color(theme.border)
             .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, _window, cx| {
                 cx.emit(PaneEvent::Focus);
             }))

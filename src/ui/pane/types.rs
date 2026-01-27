@@ -55,6 +55,13 @@ impl TabItem {
             TabItem::Editor(e) => e.read(cx).to_config(cx),
         }
     }
+
+    pub fn focus(&self, window: &mut Window, cx: &App) {
+        match self {
+            TabItem::Terminal(t) => t.read(cx).focus_handle(cx).focus(window),
+            TabItem::Editor(e) => e.read(cx).focus_handle(cx).focus(window),
+        }
+    }
 }
 
 pub enum PaneEvent {

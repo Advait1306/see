@@ -220,11 +220,13 @@ impl Render for DiffList {
             .id("diff-carousel")
             .key_context("DiffCarousel")
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|this, _: &PrevDiff, _, cx| {
+            .on_action(cx.listener(|this, _: &PrevDiff, window, cx| {
                 this.go_to_previous(cx);
+                this.focus_handle.focus(window);
             }))
-            .on_action(cx.listener(|this, _: &NextDiff, _, cx| {
+            .on_action(cx.listener(|this, _: &NextDiff, window, cx| {
                 this.go_to_next(cx);
+                this.focus_handle.focus(window);
             }))
             .size_full()
             .flex()

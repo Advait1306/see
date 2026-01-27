@@ -484,25 +484,30 @@ impl Render for EditorView {
                 cx.notify();
             }))
             .on_mouse_down(MouseButton::Left, cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                cx.focus_self(window);
-                this.reset_cursor_blink();
-
                 let Some(bounds) = this.last_bounds else { return };
                 let (line, _col) = this.pixel_to_line_col(event.position, bounds, cx);
 
-                // In diff mode, check if clicking on a collapsed section
+                // In diff mode, check if clicking on a collapsed section but don't take focus
                 if let Some(ref diff_data) = this.diff_mode {
                     if let Some(display_line) = diff_data.display_lines.get(line) {
                         if let DiffDisplayLine::Collapsed { start_idx, end_idx, .. } = display_line {
                             // Expand this section
                             this.expand_diff_section(*start_idx, *end_idx);
                             cx.notify();
-                            return;
                         }
                     }
-                    // Don't allow selection in diff mode
                     return;
                 }
+
+                // If not focused, first click only focuses without moving cursor
+                let was_focused = this.focus_handle.is_focused(window);
+                cx.focus_self(window);
+                if !was_focused {
+                    cx.notify();
+                    return;
+                }
+
+                this.reset_cursor_blink();
 
                 let (_line, col) = this.pixel_to_line_col(event.position, bounds, cx);
 
