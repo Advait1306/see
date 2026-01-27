@@ -18,7 +18,6 @@
 //! is collapsed to simplify the tree.
 
 use crate::config;
-use crate::stores::EditorStore;
 use crate::stores::TerminalStore;
 use crate::types::TabConfig;
 use crate::ui::pane::{Axis, DividerDrag, Pane, PaneEvent, SplitDirection, TabItem};
@@ -210,13 +209,12 @@ impl PaneStore {
     pub fn load(
         workspace_id: String,
         workspace_path: PathBuf,
-        buffer_store: Entity<EditorStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let layout_path = config::layout_path(&workspace_id);
         let layout: LayoutNode = config::load_json(&layout_path);
 
-        let member = Self::create_member_from_layout(&layout, &workspace_path, &buffer_store, cx);
+        let member = Self::create_member_from_layout(&layout, &workspace_path, cx);
         let active_pane = member.first_pane();
         let mut store = Self::with_root(workspace_id, member, cx);
         store.active_pane = active_pane;
@@ -236,7 +234,6 @@ impl PaneStore {
     fn create_member_from_layout(
         layout: &LayoutNode,
         path: &PathBuf,
-        buffer_store: &Entity<EditorStore>,
         cx: &mut Context<Self>,
     ) -> Member {
         match layout {
@@ -263,16 +260,14 @@ impl PaneStore {
                                 }
                             }
                             TabConfig::Editor(editor_config) => {
-                                if editor_config.path.exists() {
-                                    if let Some(buffer) = buffer_store.update(cx, |store, cx| {
-                                        store.open_buffer(editor_config.path.clone(), cx)
-                                    }) {
-                                        let editor = cx.new(|cx| {
-                                            EditorView::new(buffer, editor_config.path.clone(), cx)
-                                        });
-                                        pane.tabs.push(TabItem::Editor(editor));
-                                    }
-                                }
+                                let editor = cx.new(|cx| {
+                                    EditorView::new(
+                                        editor_config.path.clone(),
+                                        Default::default(),
+                                        cx,
+                                    )
+                                });
+                                pane.tabs.push(TabItem::Editor(editor));
                             }
                         }
                     }
@@ -295,7 +290,7 @@ impl PaneStore {
             } => {
                 let members: Vec<Member> = children
                     .iter()
-                    .map(|child| Self::create_member_from_layout(child, path, buffer_store, cx))
+                    .map(|child| Self::create_member_from_layout(child, path, cx))
                     .collect();
 
                 Member::Axis(PaneAxis {
@@ -368,7 +363,7 @@ impl PaneStore {
             } => {
                 this.split_pane(&pane, new_pane.clone(), *direction, cx);
             }
-            PaneEvent::TabMoved | PaneEvent::TerminalAdded | PaneEvent::TabClosed => {
+            PaneEvent::TabMoved | PaneEvent::TabAdded | PaneEvent::TabClosed => {
                 let is_empty = pane.read(cx).tabs.is_empty();
                 if is_empty {
                     this.remove_pane(&pane, cx);

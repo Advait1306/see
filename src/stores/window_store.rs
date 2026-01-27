@@ -2,8 +2,16 @@ use gpui::*;
 use serde::{Deserialize, Serialize};
 
 use crate::config;
-use crate::workspace::Workspace;
+use super::workspace::Workspace;
 use super::{WorkspaceStore, WorkspaceStoreEvent};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RightSidebarPanel {
+    #[default]
+    Hidden,
+    FileTree,
+    DiffList,
+}
 
 #[derive(Clone)]
 pub enum WindowStoreEvent {
@@ -15,22 +23,22 @@ pub enum WindowStoreEvent {
 pub struct WindowUiState {
     pub active_workspace_id: Option<String>,
     pub sidebar_collapsed: bool,
-    pub file_tree_visible: bool,
+    pub right_sidebar: RightSidebarPanel,
 }
 
 pub struct WindowStore {
-    workspace_store: Entity<WorkspaceStore>,
     active_workspace_id: Option<String>,
     sidebar_collapsed: bool,
-    file_tree_visible: bool,
+    right_sidebar: RightSidebarPanel,
     _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<WindowStoreEvent> for WindowStore {}
 
 impl WindowStore {
-    pub fn new(workspace_store: Entity<WorkspaceStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         let ui_state: WindowUiState = config::load_json(&config::ui_state_path());
+        let workspace_store = WorkspaceStore::global(cx);
 
         // Determine initial active workspace:
         // 1. Try saved active_workspace_id if it still exists
@@ -54,10 +62,9 @@ impl WindowStore {
         });
 
         Self {
-            workspace_store,
             active_workspace_id,
             sidebar_collapsed: ui_state.sidebar_collapsed,
-            file_tree_visible: ui_state.file_tree_visible,
+            right_sidebar: ui_state.right_sidebar,
             _subscriptions: vec![sub],
         }
     }
@@ -66,7 +73,8 @@ impl WindowStore {
         match event {
             WorkspaceStoreEvent::WorkspacesChanged => {
                 if let Some(id) = &self.active_workspace_id {
-                    let store = self.workspace_store.read(cx);
+                    let store = WorkspaceStore::global(cx);
+                    let store = store.read(cx);
                     if store.get_workspace(id).is_none() {
                         self.active_workspace_id = store.first_workspace_id().cloned();
                         self.save();
@@ -92,16 +100,15 @@ impl WindowStore {
         self.active_workspace_id.as_ref()
     }
 
-    pub fn active_workspace<'a>(&'a self, cx: &'a App) -> Option<&'a Entity<Workspace>> {
-        self.active_workspace_id.as_ref().and_then(|id| {
-            self.workspace_store.read(cx).get_workspace(id)
-        })
+    pub fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
+        let id = self.active_workspace_id.as_ref()?;
+        WorkspaceStore::global(cx).read(cx).get_workspace(id).cloned()
     }
 
     pub fn set_active_workspace(&mut self, id: String, cx: &mut Context<Self>) {
         if self.active_workspace_id.as_ref() != Some(&id) {
             // Verify workspace exists
-            if self.workspace_store.read(cx).get_workspace(&id).is_some() {
+            if WorkspaceStore::global(cx).read(cx).get_workspace(&id).is_some() {
                 self.active_workspace_id = Some(id);
                 self.save();
                 cx.emit(WindowStoreEvent::ActiveWorkspaceChanged);
@@ -111,8 +118,7 @@ impl WindowStore {
     }
 
     pub fn next_workspace(&mut self, cx: &mut Context<Self>) {
-        let ids: Vec<String> = self
-            .workspace_store
+        let ids: Vec<String> = WorkspaceStore::global(cx)
             .read(cx)
             .workspace_ids()
             .cloned()
@@ -128,8 +134,7 @@ impl WindowStore {
     }
 
     pub fn prev_workspace(&mut self, cx: &mut Context<Self>) {
-        let ids: Vec<String> = self
-            .workspace_store
+        let ids: Vec<String> = WorkspaceStore::global(cx)
             .read(cx)
             .workspace_ids()
             .cloned()
@@ -159,12 +164,25 @@ impl WindowStore {
         cx.notify();
     }
 
-    pub fn file_tree_visible(&self) -> bool {
-        self.file_tree_visible
+    pub fn right_sidebar(&self) -> RightSidebarPanel {
+        self.right_sidebar
     }
 
     pub fn toggle_file_tree(&mut self, cx: &mut Context<Self>) {
-        self.file_tree_visible = !self.file_tree_visible;
+        self.right_sidebar = match self.right_sidebar {
+            RightSidebarPanel::FileTree => RightSidebarPanel::Hidden,
+            _ => RightSidebarPanel::FileTree,
+        };
+        self.save();
+        cx.emit(WindowStoreEvent::UiStateChanged);
+        cx.notify();
+    }
+
+    pub fn toggle_diff_list(&mut self, cx: &mut Context<Self>) {
+        self.right_sidebar = match self.right_sidebar {
+            RightSidebarPanel::DiffList => RightSidebarPanel::Hidden,
+            _ => RightSidebarPanel::DiffList,
+        };
         self.save();
         cx.emit(WindowStoreEvent::UiStateChanged);
         cx.notify();
@@ -174,7 +192,7 @@ impl WindowStore {
         let state = WindowUiState {
             active_workspace_id: self.active_workspace_id.clone(),
             sidebar_collapsed: self.sidebar_collapsed,
-            file_tree_visible: self.file_tree_visible,
+            right_sidebar: self.right_sidebar,
         };
         config::save_json(&config::ui_state_path(), &state);
     }

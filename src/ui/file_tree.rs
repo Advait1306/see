@@ -1,7 +1,6 @@
-use crate::stores::{EditorStore, FileEntry, WindowStore, WindowStoreEvent};
+use crate::stores::{FileEntry, WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
 use crate::ui::EditorView;
 use crate::ui::pane::TabItem;
-use crate::workspace::{Workspace, WorkspaceEvent};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
@@ -177,7 +176,7 @@ impl FileTree {
     }
 
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
-        self.window_store.read(cx).active_workspace(cx).cloned()
+        self.window_store.read(cx).active_workspace(cx)
     }
 
     fn file_tree_entries(&self, cx: &App) -> Vec<FileEntry> {
@@ -203,23 +202,13 @@ impl FileTree {
             return;
         };
 
-        let buffer_store = EditorStore::global(cx);
-        let buffer = buffer_store.update(cx, |store, cx| store.open_buffer(path.clone(), cx));
-
-        let Some(buffer) = buffer else {
-            log::error!("Failed to open buffer for {:?}", path);
-            return;
-        };
-
         let pane_store = workspace.read(cx).pane_store().clone();
         pane_store.update(cx, |ps, cx| {
             if let Some(pane) = ps.active_pane.clone() {
-                // TODO: (fix) add a speacial function to add editors. Currently views are being added as Entities, that shouldn't be the case.
                 pane.update(cx, |p, cx| {
-                    let editor_view = cx.new(|cx| EditorView::new(buffer, path, cx));
-                    p.tabs.push(TabItem::Editor(editor_view));
-                    p.active_index = p.tabs.len() - 1;
-                    cx.notify();
+                    let editor_view =
+                        cx.new(|cx| EditorView::new(path.clone(), Default::default(), cx));
+                    p.add_tab(TabItem::Editor(editor_view), cx);
                 });
             }
         });

@@ -1,4 +1,5 @@
-use crate::stores::{EditorStore, FileTreeStore, FileTreeStoreEvent, PaneStore, PaneStoreEvent};
+use super::super::git::GitStore;
+use super::super::{FileTreeStore, FileTreeStoreEvent, PaneStore, PaneStoreEvent};
 use crate::ui::pane_group::PaneGroupView;
 use gpui::*;
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,7 @@ pub struct Workspace {
     pub name: String,
     pub path: PathBuf,
     file_tree_store: Entity<FileTreeStore>,
+    git_store: Option<Entity<GitStore>>,
     pane_store: Entity<PaneStore>,
     pane_group_view: Entity<PaneGroupView>,
     _subscriptions: Vec<Subscription>,
@@ -24,14 +26,17 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(id: String, name: String, path: PathBuf, cx: &mut Context<Self>) -> Self {
-        let buffer_store = EditorStore::global(cx);
-
         let file_tree_store = cx.new(|cx| FileTreeStore::new(id.clone(), path.clone(), cx));
+        let git_store = if let Some(store) = GitStore::try_new(&path) {
+            Some(cx.new(|cx| store.with_polling(cx)))
+        } else {
+            None
+        };
 
         let pane_store = {
             let id = id.clone();
             let path = path.clone();
-            cx.new(|cx| PaneStore::load(id, path, buffer_store, cx))
+            cx.new(|cx| PaneStore::load(id, path, cx))
         };
 
         let pane_group_view = {
@@ -61,6 +66,7 @@ impl Workspace {
             name,
             path,
             file_tree_store,
+            git_store,
             pane_store,
             pane_group_view,
             _subscriptions: subscriptions,
@@ -69,6 +75,10 @@ impl Workspace {
 
     pub fn file_tree_store(&self) -> &Entity<FileTreeStore> {
         &self.file_tree_store
+    }
+
+    pub fn git_store(&self) -> Option<&Entity<GitStore>> {
+        self.git_store.as_ref()
     }
 
     pub fn pane_store(&self) -> &Entity<PaneStore> {

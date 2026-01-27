@@ -1,5 +1,5 @@
 use crate::config;
-use crate::workspace::{Workspace, WorkspaceData, WorkspaceEvent};
+use super::{Workspace, WorkspaceData, WorkspaceEvent};
 use gpui::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -26,17 +26,18 @@ pub struct WorkspaceStore {
     _subscriptions: Vec<Subscription>,
 }
 
-// Stored as global for future use (pattern matches EditorStore, TerminalStore)
-#[allow(dead_code)]
-struct GlobalWorkspaceStore(Entity<WorkspaceStore>);
+pub struct GlobalWorkspaceStore(pub Entity<WorkspaceStore>);
 
 impl Global for GlobalWorkspaceStore {}
 
 impl WorkspaceStore {
-    pub fn init(cx: &mut App) -> Entity<Self> {
+    pub fn init(cx: &mut App) {
         let store = cx.new(|cx| Self::load(cx));
-        cx.set_global(GlobalWorkspaceStore(store.clone()));
-        store
+        cx.set_global(GlobalWorkspaceStore(store));
+    }
+
+    pub fn global(cx: &App) -> Entity<Self> {
+        cx.global::<GlobalWorkspaceStore>().0.clone()
     }
 
     fn load(cx: &mut Context<Self>) -> Self {

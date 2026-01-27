@@ -2,7 +2,7 @@
 
 use super::selection::Selection;
 use super::view::EditorView;
-use crate::editor::EditorState;
+use crate::stores::EditorState;
 use crate::types::SelectionPhase;
 use gpui::*;
 
@@ -13,6 +13,16 @@ pub(crate) fn is_word_char(ch: char) -> bool {
 
 /// Handle a key event in the editor
 pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut Context<EditorView>) {
+    // Diff mode is read-only - ignore all input
+    if view.is_diff_mode() {
+        return;
+    }
+
+    // Clone buffer to avoid borrow issues - no buffer means read-only
+    let Some(buffer) = view.buffer.clone() else {
+        return;
+    };
+
     // Reset cursor blink on any key press
     view.reset_cursor_blink();
 
@@ -21,7 +31,7 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
 
     // Handle Ctrl/Cmd+S for save
     if modifiers.platform && key == "s" {
-        view.buffer.update(cx, |buf, cx| {
+        buffer.update(cx, |buf, cx| {
             let _ = buf.save(cx);
         });
         return;
@@ -29,7 +39,7 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
 
     // Handle Cmd+Z for undo
     if modifiers.platform && !modifiers.shift && key == "z" {
-        if let Some(state) = view.buffer.update(cx, |buf, cx| buf.undo(cx)) {
+        if let Some(state) = buffer.update(cx, |buf, cx| buf.undo(cx)) {
             view.cursor_line = state.cursor.0;
             view.cursor_col = state.cursor.1;
             // Restore selection if there was one
@@ -53,7 +63,7 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
 
     // Handle Cmd+Shift+Z for redo
     if modifiers.platform && modifiers.shift && key == "z" {
-        if let Some(state) = view.buffer.update(cx, |buf, cx| buf.redo(cx)) {
+        if let Some(state) = buffer.update(cx, |buf, cx| buf.redo(cx)) {
             view.cursor_line = state.cursor.0;
             view.cursor_col = state.cursor.1;
             // Redo doesn't restore selection (it was deleted)
@@ -92,7 +102,7 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
         }
         "down" => {
             view.clear_selection();
-            let line_count = view.buffer.read(cx).line_count();
+            let line_count = buffer.read(cx).line_count();
             if view.cursor_line + 1 < line_count {
                 view.cursor_line += 1;
                 view.ensure_cursor_valid(cx);
@@ -121,7 +131,7 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
             } else if view.cursor_line > 0 {
                 // Move to end of previous line
                 view.cursor_line -= 1;
-                view.cursor_col = view.buffer.read(cx).line_len(view.cursor_line);
+                view.cursor_col = buffer.read(cx).line_len(view.cursor_line);
                 view.ensure_cursor_visible(cx);
                 cx.notify();
             }
@@ -140,14 +150,14 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
                 }
             }
             view.selection_phase = SelectionPhase::None;
-            let line_len = view.buffer.read(cx).line_len(view.cursor_line);
+            let line_len = buffer.read(cx).line_len(view.cursor_line);
             if view.cursor_col < line_len {
                 view.cursor_col += 1;
                 view.ensure_cursor_visible(cx);
                 cx.notify();
             } else {
                 // Move to start of next line
-                let line_count = view.buffer.read(cx).line_count();
+                let line_count = buffer.read(cx).line_count();
                 if view.cursor_line + 1 < line_count {
                     view.cursor_line += 1;
                     view.cursor_col = 0;
@@ -164,7 +174,7 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
         }
         "end" => {
             view.clear_selection();
-            view.cursor_col = view.buffer.read(cx).line_len(view.cursor_line);
+            view.cursor_col = buffer.read(cx).line_len(view.cursor_line);
             view.ensure_cursor_visible(cx);
             cx.notify();
         }
@@ -177,7 +187,7 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
         }
         "pagedown" => {
             view.clear_selection();
-            let line_count = view.buffer.read(cx).line_count();
+            let line_count = buffer.read(cx).line_count();
             view.cursor_line = (view.cursor_line + 20).min(line_count.saturating_sub(1));
             view.ensure_cursor_valid(cx);
             view.ensure_cursor_visible(cx);
@@ -213,12 +223,16 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
 }
 
 pub(crate) fn insert_text(view: &mut EditorView, text: &str, cx: &mut Context<EditorView>) {
+    let Some(buffer) = view.buffer.clone() else {
+        return;
+    };
+
     // Delete selection if any (this also positions cursor at selection start)
     view.delete_selection(cx);
 
     let state_before = EditorState::new((view.cursor_line, view.cursor_col));
-    let offset = view.buffer.read(cx).line_col_to_offset(view.cursor_line, view.cursor_col);
-    view.buffer.update(cx, |buf, cx| {
+    let offset = buffer.read(cx).line_col_to_offset(view.cursor_line, view.cursor_col);
+    buffer.update(cx, |buf, cx| {
         buf.insert_with_state(offset, text, state_before, cx);
     });
 
@@ -236,19 +250,23 @@ pub(crate) fn insert_text(view: &mut EditorView, text: &str, cx: &mut Context<Ed
 }
 
 fn delete_backward(view: &mut EditorView, cx: &mut Context<EditorView>) {
+    let Some(buffer) = view.buffer.clone() else {
+        return;
+    };
+
     let state_before = EditorState::new((view.cursor_line, view.cursor_col));
     if view.cursor_col > 0 {
-        let offset = view.buffer.read(cx).line_col_to_offset(view.cursor_line, view.cursor_col);
-        view.buffer.update(cx, |buf, cx| {
+        let offset = buffer.read(cx).line_col_to_offset(view.cursor_line, view.cursor_col);
+        buffer.update(cx, |buf, cx| {
             buf.delete_with_state(offset - 1, offset, state_before, cx);
         });
         view.cursor_col -= 1;
         cx.notify();
     } else if view.cursor_line > 0 {
         // Join with previous line
-        let prev_line_len = view.buffer.read(cx).line_len(view.cursor_line - 1);
-        let offset = view.buffer.read(cx).line_col_to_offset(view.cursor_line, 0);
-        view.buffer.update(cx, |buf, cx| {
+        let prev_line_len = buffer.read(cx).line_len(view.cursor_line - 1);
+        let offset = buffer.read(cx).line_col_to_offset(view.cursor_line, 0);
+        buffer.update(cx, |buf, cx| {
             buf.delete_with_state(offset - 1, offset, state_before, cx);
         });
         view.cursor_line -= 1;
@@ -259,20 +277,24 @@ fn delete_backward(view: &mut EditorView, cx: &mut Context<EditorView>) {
 }
 
 fn delete_forward(view: &mut EditorView, cx: &mut Context<EditorView>) {
+    let Some(buffer) = view.buffer.clone() else {
+        return;
+    };
+
     let state_before = EditorState::new((view.cursor_line, view.cursor_col));
-    let line_len = view.buffer.read(cx).line_len(view.cursor_line);
-    let line_count = view.buffer.read(cx).line_count();
+    let line_len = buffer.read(cx).line_len(view.cursor_line);
+    let line_count = buffer.read(cx).line_count();
 
     if view.cursor_col < line_len {
-        let offset = view.buffer.read(cx).line_col_to_offset(view.cursor_line, view.cursor_col);
-        view.buffer.update(cx, |buf, cx| {
+        let offset = buffer.read(cx).line_col_to_offset(view.cursor_line, view.cursor_col);
+        buffer.update(cx, |buf, cx| {
             buf.delete_with_state(offset, offset + 1, state_before, cx);
         });
         cx.notify();
     } else if view.cursor_line + 1 < line_count {
         // Delete newline - join with next line
-        let offset = view.buffer.read(cx).line_col_to_offset(view.cursor_line, view.cursor_col);
-        view.buffer.update(cx, |buf, cx| {
+        let offset = buffer.read(cx).line_col_to_offset(view.cursor_line, view.cursor_col);
+        buffer.update(cx, |buf, cx| {
             buf.delete_with_state(offset, offset + 1, state_before, cx);
         });
         cx.notify();
@@ -280,7 +302,11 @@ fn delete_forward(view: &mut EditorView, cx: &mut Context<EditorView>) {
 }
 
 pub(crate) fn move_word_left(view: &mut EditorView, cx: &mut Context<EditorView>) {
-    let buffer = view.buffer.read(cx);
+    let Some(buffer) = view.buffer.clone() else {
+        return;
+    };
+
+    let buffer = buffer.read(cx);
     let mut offset = buffer.line_col_to_offset(view.cursor_line, view.cursor_col);
 
     if offset == 0 {
@@ -350,7 +376,11 @@ pub(crate) fn move_word_left(view: &mut EditorView, cx: &mut Context<EditorView>
 }
 
 pub(crate) fn move_word_right(view: &mut EditorView, cx: &mut Context<EditorView>) {
-    let buffer = view.buffer.read(cx);
+    let Some(buffer) = view.buffer.clone() else {
+        return;
+    };
+
+    let buffer = buffer.read(cx);
     let total_chars = buffer.total_chars();
     let mut offset = buffer.line_col_to_offset(view.cursor_line, view.cursor_col);
 

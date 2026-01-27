@@ -1,4 +1,5 @@
 use crate::stores::TerminalStore;
+use crate::types::Tab;
 use crate::ui::TerminalView;
 use gpui::prelude::*;
 use gpui::*;
@@ -38,6 +39,7 @@ impl Pane {
             self.tabs.push(TabItem::Terminal(terminal_view));
             self.terminal_counter += 1;
             self.active_index = self.tabs.len() - 1;
+            cx.emit(PaneEvent::TabAdded);
             cx.notify();
         }
     }
@@ -48,6 +50,7 @@ impl Pane {
         }
         self.tabs.push(tab);
         self.active_index = self.tabs.len() - 1;
+        cx.emit(PaneEvent::TabAdded);
         cx.notify();
     }
 
@@ -134,16 +137,7 @@ impl Pane {
                         terminal_idx += 1;
                         format!("Terminal {}", terminal_idx)
                     }
-                    TabItem::Editor(editor) => {
-                        let editor_view = editor.read(cx);
-                        let buffer = editor_view.buffer().read(cx);
-                        let name = buffer.file_name();
-                        if buffer.is_dirty() {
-                            format!("{}*", name)
-                        } else {
-                            name
-                        }
-                    }
+                    TabItem::Editor(editor) => editor.read(cx).label(cx)
                 };
 
                 div()
@@ -185,7 +179,6 @@ impl Pane {
                     .text_xs()
                     .on_click(cx.listener(|this, _, _window, cx| {
                         this.add_terminal(cx);
-                        cx.emit(PaneEvent::TerminalAdded);
                     }))
                     .child("+"),
             )

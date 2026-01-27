@@ -9,6 +9,7 @@
 
 - Only add comments on code that's hard to read at first glance or to document behavior that isn't obvious
 - Avoid comments that merely restate what the code does (e.g., `// Get the config directory for the app` above a function named `config_dir()`)
+- Only use `.map()` for arrays/iterators, not for `Option` - use `if let` or `let ... else` instead
 
 ## Architecture
 
