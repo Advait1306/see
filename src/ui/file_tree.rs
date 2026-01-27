@@ -208,9 +208,7 @@ impl FileTree {
                 pane.update(cx, |p, cx| {
                     let editor_view =
                         cx.new(|cx| EditorView::new(path.clone(), Default::default(), cx));
-                    p.tabs.push(TabItem::Editor(editor_view));
-                    p.active_index = p.tabs.len() - 1;
-                    cx.notify();
+                    p.add_tab(TabItem::Editor(editor_view), cx);
                 });
             }
         });

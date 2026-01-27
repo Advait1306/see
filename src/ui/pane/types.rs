@@ -63,7 +63,7 @@ pub enum PaneEvent {
         new_pane: Entity<Pane>,
     },
     TabMoved,
-    TerminalAdded,
+    TabAdded,
     TabClosed,
     Focus,
 }

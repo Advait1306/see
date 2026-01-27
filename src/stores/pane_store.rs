@@ -260,16 +260,14 @@ impl PaneStore {
                                 }
                             }
                             TabConfig::Editor(editor_config) => {
-                                if editor_config.path.exists() {
-                                    let editor = cx.new(|cx| {
-                                        EditorView::new(
-                                            editor_config.path.clone(),
-                                            Default::default(),
-                                            cx,
-                                        )
-                                    });
-                                    pane.tabs.push(TabItem::Editor(editor));
-                                }
+                                let editor = cx.new(|cx| {
+                                    EditorView::new(
+                                        editor_config.path.clone(),
+                                        Default::default(),
+                                        cx,
+                                    )
+                                });
+                                pane.tabs.push(TabItem::Editor(editor));
                             }
                         }
                     }
@@ -365,7 +363,7 @@ impl PaneStore {
             } => {
                 this.split_pane(&pane, new_pane.clone(), *direction, cx);
             }
-            PaneEvent::TabMoved | PaneEvent::TerminalAdded | PaneEvent::TabClosed => {
+            PaneEvent::TabMoved | PaneEvent::TabAdded | PaneEvent::TabClosed => {
                 let is_empty = pane.read(cx).tabs.is_empty();
                 if is_empty {
                     this.remove_pane(&pane, cx);

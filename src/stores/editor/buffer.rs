@@ -359,10 +359,6 @@ impl Buffer {
         self.is_dirty
     }
 
-    pub fn file_path(&self) -> &PathBuf {
-        &self.file_path
-    }
-
     pub fn file_name(&self) -> String {
         self.file_path
             .file_name()

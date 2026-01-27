@@ -42,10 +42,14 @@ impl EditorStore {
             return Some(buffer.clone());
         }
 
+        // Check if file exists before attempting to load
+        if !canonical_path.exists() {
+            return None;
+        }
+
         let buffer = cx.new(|cx| {
-            Buffer::load(canonical_path.clone(), cx).unwrap_or_else(|_| {
-                panic!("Failed to load buffer for {:?}", canonical_path)
-            })
+            Buffer::load(canonical_path.clone(), cx)
+                .expect("File existed but failed to load")
         });
 
         self.buffers.insert(canonical_path.clone(), buffer.clone());

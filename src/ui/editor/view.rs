@@ -28,7 +28,8 @@ pub struct EditorViewOptions {
 }
 
 pub struct EditorView {
-    pub(crate) buffer: Entity<Buffer>,
+    pub(crate) buffer: Option<Entity<Buffer>>,
+    pub(crate) file_path: PathBuf,
     pub(crate) cursor_line: usize,
     pub(crate) cursor_col: usize,
     pub(crate) scroll_offset: usize,
@@ -51,8 +52,30 @@ impl EditorView {
         // Get or create buffer from EditorStore
         let editor_store = EditorStore::global(cx);
         let buffer = editor_store
-            .update(cx, |store, cx| store.open_buffer(file_path.clone(), cx))
-            .expect("Failed to open buffer");
+            .update(cx, |store, cx| store.open_buffer(file_path.clone(), cx));
+
+        // Handle case where file doesn't exist
+        let Some(buffer) = buffer else {
+            return Self {
+                buffer: None,
+                file_path,
+                cursor_line: 0,
+                cursor_col: 0,
+                scroll_offset: 0,
+                scroll_x: 0.0,
+                scroll_accumulator: 0.0,
+                focus_handle: cx.focus_handle(),
+                last_bounds: None,
+                last_line_number_width: 0.0,
+                cursor_visible: false,
+                last_cursor_move: std::time::Instant::now(),
+                selection: None,
+                selection_phase: SelectionPhase::None,
+                diff_mode: None,
+                _blink_task: None,
+                _buffer_subscription: None,
+            };
+        };
 
         if options.diff_mode {
             // Diff mode: read-only, shows unified diff
@@ -72,7 +95,8 @@ impl EditorView {
             let display_lines = compute_display_lines(&diff_lines, &[], DIFF_CONTEXT_LINES);
 
             Self {
-                buffer,
+                buffer: Some(buffer),
+                file_path,
                 cursor_line: 0,
                 cursor_col: 0,
                 scroll_offset: 0,
@@ -132,7 +156,8 @@ impl EditorView {
             });
 
             Self {
-                buffer,
+                buffer: Some(buffer),
+                file_path,
                 cursor_line: 0,
                 cursor_col: 0,
                 scroll_offset: 0,
@@ -176,12 +201,9 @@ impl EditorView {
             .unwrap_or(0)
     }
 
-    pub fn buffer(&self) -> &Entity<Buffer> {
-        &self.buffer
-    }
-
     pub(crate) fn ensure_cursor_valid(&mut self, cx: &mut Context<Self>) {
-        let buffer = self.buffer.read(cx);
+        let Some(buffer) = &self.buffer else { return };
+        let buffer = buffer.read(cx);
         let line_count = buffer.line_count();
 
         if line_count == 0 {
@@ -242,11 +264,13 @@ impl EditorView {
         let (line_count, line_len) = if let Some(ref diff_data) = self.diff_mode {
             let lc = diff_data.display_lines.len();
             (lc, 0) // No column clamping needed for diff mode
-        } else {
-            let buf = self.buffer.read(cx);
+        } else if let Some(ref buffer) = self.buffer {
+            let buf = buffer.read(cx);
             let lc = buf.line_count();
             let line = if lc > 0 { clicked_line.min(lc - 1) } else { 0 };
             (lc, if lc > 0 { buf.line_len(line) } else { 0 })
+        } else {
+            (0, 0)
         };
 
         let line = if line_count > 0 {
@@ -268,13 +292,14 @@ impl EditorView {
     /// Get selected text from buffer
     #[allow(dead_code)]
     pub(crate) fn selection_to_string(&self, cx: &App) -> Option<String> {
+        let buffer = self.buffer.as_ref()?;
         let selection = self.selection.as_ref()?;
         if selection.is_empty() {
             return None;
         }
 
         let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
-        let buffer = self.buffer.read(cx);
+        let buffer = buffer.read(cx);
 
         let start_offset = buffer.line_col_to_offset(start_line, start_col);
         let end_offset = buffer.line_col_to_offset(end_line, end_col);
@@ -284,8 +309,8 @@ impl EditorView {
 
     /// Delete selected text and return whether anything was deleted
     pub(crate) fn delete_selection(&mut self, cx: &mut Context<Self>) -> bool {
-        // Diff mode is read-only
-        if self.diff_mode.is_some() {
+        // Diff mode is read-only or no buffer available
+        if self.diff_mode.is_some() || self.buffer.is_none() {
             return false;
         }
 
@@ -301,10 +326,11 @@ impl EditorView {
         );
 
         let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
-        let start_offset = self.buffer.read(cx).line_col_to_offset(start_line, start_col);
-        let end_offset = self.buffer.read(cx).line_col_to_offset(end_line, end_col);
+        let buffer = self.buffer.as_ref().unwrap();
+        let start_offset = buffer.read(cx).line_col_to_offset(start_line, start_col);
+        let end_offset = buffer.read(cx).line_col_to_offset(end_line, end_col);
 
-        self.buffer.update(cx, |buf, cx| {
+        buffer.update(cx, |buf, cx| {
             buf.delete_with_state(start_offset, end_offset, state_before, cx);
         });
 
@@ -350,10 +376,47 @@ impl EditorView {
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_component::theme::ActiveTheme;
+
         let focus_handle = self.focus_handle.clone();
         let is_focused = focus_handle.is_focused(window);
-        let buffer = self.buffer.clone();
         let is_diff_mode = self.diff_mode.is_some();
+
+        // Show error state if buffer is not available
+        let Some(buffer) = self.buffer.clone() else {
+            let file_name = self.file_path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
+
+            return div()
+                .id("editor-wrapper")
+                .track_focus(&focus_handle)
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(cx.theme().background)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .text_sm()
+                                .child(format!("File not found: {}", file_name))
+                        )
+                        .child(
+                            div()
+                                .text_color(cx.theme().muted_foreground.opacity(0.6))
+                                .text_xs()
+                                .child(self.file_path.display().to_string())
+                        )
+                )
+                .into_any_element();
+        };
 
         div()
             .id("editor-wrapper")
@@ -394,9 +457,11 @@ impl Render for EditorView {
                         }
                     }).max().unwrap_or(0);
                     (diff_data.display_lines.len(), max_len)
-                } else {
-                    let buffer = this.buffer.read(cx);
+                } else if let Some(ref buffer) = this.buffer {
+                    let buffer = buffer.read(cx);
                     (buffer.line_count(), buffer.max_line_len())
+                } else {
+                    return; // No buffer available
                 };
 
                 // Calculate visible area from stored bounds
@@ -533,6 +598,7 @@ impl Render for EditorView {
                 cursor_visible: self.cursor_visible,
                 selection: self.selection,
             })
+            .into_any_element()
     }
 }
 
@@ -547,17 +613,26 @@ impl Tab for EditorView {
         if self.diff_mode.is_some() {
             return "Diff".to_string();
         }
-        let buffer = self.buffer.read(cx);
-        let name = buffer.file_name();
-        if buffer.is_dirty() {
-            format!("{}*", name)
-        } else {
+
+        // Get file name from buffer if available, otherwise from stored path
+        let file_name = if let Some(ref buffer) = self.buffer {
+            let buf = buffer.read(cx);
+            let name = buf.file_name();
+            if buf.is_dirty() {
+                return format!("{}*", name);
+            }
             name
-        }
+        } else {
+            self.file_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "Unknown".to_string())
+        };
+
+        file_name
     }
 
-    fn to_config(&self, cx: &App) -> TabConfig {
-        let path = self.buffer.read(cx).file_path().clone();
-        TabConfig::Editor(EditorTabConfig { path })
+    fn to_config(&self, _cx: &App) -> TabConfig {
+        TabConfig::Editor(EditorTabConfig { path: self.file_path.clone() })
     }
 }
