@@ -384,9 +384,9 @@ impl Render for EditorView {
                     format!("File not found: {}", file_name),
                     "The file may have been moved or deleted.".to_string(),
                 ),
-                Some(BufferError::UnsupportedFormat(_)) => (
+                Some(BufferError::UnsupportedFormat(msg)) => (
                     "Unable to display file".to_string(),
-                    "This file is binary or uses an unsupported encoding.".to_string(),
+                    msg.clone(),
                 ),
                 None => (
                     format!("Cannot open: {}", file_name),
