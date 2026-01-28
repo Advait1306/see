@@ -33,6 +33,7 @@ use super::selection::Selection;
 use super::view::EditorView;
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, GUTTER_MARKER_WIDTH, PADDING};
 use crate::stores::{Buffer, DiffLineTag, LineDiff};
+use crate::syntax::{HighlightSpan, SyntaxTheme};
 use gpui::prelude::*;
 use gpui::*;
 use gpui_component::theme::ActiveTheme;
@@ -71,7 +72,7 @@ pub(crate) enum DiffVisibleLine {
 }
 
 pub(crate) struct EditorLayoutState {
-    pub(crate) visible_lines: Vec<(usize, String)>, // (line_number, content) for normal mode
+    pub(crate) visible_lines: Vec<(usize, String, usize)>, // (line_number, content, byte_offset) for normal mode
     pub(crate) cursor_position: Option<gpui::Point<Pixels>>,
     pub(crate) line_number_width: f32,
     pub(crate) scroll_x: f32,
@@ -80,6 +81,7 @@ pub(crate) struct EditorLayoutState {
     pub(crate) diff_mode_lines: Vec<DiffVisibleLine>, // Diff mode visible lines
     pub(crate) diff_old_num_width: f32,
     pub(crate) diff_new_num_width: f32,
+    pub(crate) highlights: Vec<HighlightSpan>, // Syntax highlights for visible lines
 }
 
 impl IntoElement for EditorElement {
@@ -187,6 +189,7 @@ impl Element for EditorElement {
                 diff_mode_lines: diff_visible_lines,
                 diff_old_num_width,
                 diff_new_num_width,
+                highlights: Vec::new(),
             };
         }
 
@@ -202,11 +205,15 @@ impl Element for EditorElement {
                 if let Some(line) = buffer.line(line_idx) {
                     // Remove trailing newline for display
                     let line = line.trim_end_matches('\n').to_string();
-                    visible_lines.push((line_idx + 1, line)); // 1-indexed line numbers
+                    let byte_offset = buffer.line_to_byte(line_idx);
+                    visible_lines.push((line_idx + 1, line, byte_offset)); // 1-indexed line numbers
                     line_diffs.push(buffer.line_diff(line_idx));
                 }
             }
         }
+
+        // Get syntax highlights for visible lines
+        let highlights = buffer.highlights_for_visible_lines(self.scroll_offset, self.scroll_offset + visible_line_count);
 
         // Calculate line number width (4 characters minimum)
         let line_number_chars = format!("{}", line_count).len().max(4);
@@ -244,7 +251,7 @@ impl Element for EditorElement {
                 let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
 
                 // Iterate through visible lines
-                for (idx, (line_num, content)) in visible_lines.iter().enumerate() {
+                for (idx, (line_num, content, _byte_offset)) in visible_lines.iter().enumerate() {
                     let line = line_num - 1; // Convert back to 0-indexed
 
                     // Check if this line is within the selection
@@ -288,6 +295,7 @@ impl Element for EditorElement {
             diff_mode_lines: Vec::new(),
             diff_old_num_width: 0.0,
             diff_new_num_width: 0.0,
+            highlights,
         }
     }
 
@@ -312,6 +320,7 @@ impl Element for EditorElement {
         let added_color = theme.success;
         let modified_color = theme.warning;
         let deleted_color = theme.danger;
+        let syntax_theme = SyntaxTheme::from_theme(theme);
 
         let font = Font {
             family: "Paper Mono".into(),
@@ -384,7 +393,7 @@ impl Element for EditorElement {
         }
 
         // Paint line numbers first (outside clip region)
-        for (idx, (line_num, _content)) in layout.visible_lines.iter().enumerate() {
+        for (idx, (line_num, _content, _byte_offset)) in layout.visible_lines.iter().enumerate() {
             let y = origin.y + px(PADDING + (idx as f32 * CELL_HEIGHT));
 
             // Paint line number
@@ -446,23 +455,24 @@ impl Element for EditorElement {
                 window.paint_quad(fill(selection_bounds, selection_color));
             }
 
-            // Paint text
-            for (idx, (_line_num, content)) in layout.visible_lines.iter().enumerate() {
+            // Paint text with syntax highlighting
+            for (idx, (_line_num, content, byte_offset)) in layout.visible_lines.iter().enumerate() {
                 let y = origin.y + px(PADDING + (idx as f32 * CELL_HEIGHT));
 
                 if !content.is_empty() {
-                    let text_run = TextRun {
-                        len: content.len(),
-                        font: font.clone(),
-                        color: foreground_color,
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    };
+                    let text_runs = build_highlighted_text_runs(
+                        content,
+                        *byte_offset,
+                        &layout.highlights,
+                        &syntax_theme,
+                        foreground_color,
+                        &font,
+                    );
+
                     let shaped = window.text_system().shape_line(
                         content.clone().into(),
                         font_size,
-                        &[text_run],
+                        &text_runs,
                         None,
                     );
                     let _ = shaped.paint(
@@ -727,4 +737,119 @@ impl EditorElement {
             }
         }
     }
+}
+
+fn build_highlighted_text_runs(
+    content: &str,
+    line_start_byte: usize,
+    highlights: &[HighlightSpan],
+    syntax_theme: &SyntaxTheme,
+    default_color: Hsla,
+    font: &Font,
+) -> Vec<TextRun> {
+    let content_len = content.len();
+
+    // Early return for empty content
+    if content_len == 0 {
+        return vec![];
+    }
+
+    let line_end_byte = line_start_byte + content_len;
+
+    let line_highlights: Vec<_> = highlights
+        .iter()
+        .filter(|h| h.byte_range.start < line_end_byte && h.byte_range.end > line_start_byte)
+        .collect();
+
+    if line_highlights.is_empty() {
+        return vec![TextRun {
+            len: content_len,
+            font: font.clone(),
+            color: default_color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }];
+    }
+
+    let mut runs = Vec::new();
+    let mut current_pos = 0usize; // Position within content (0-based)
+
+    for highlight in &line_highlights {
+        // Convert document byte range to content-relative positions
+        let span_start_in_content = highlight
+            .byte_range
+            .start
+            .saturating_sub(line_start_byte)
+            .min(content_len);
+        let span_end_in_content = highlight
+            .byte_range
+            .end
+            .saturating_sub(line_start_byte)
+            .min(content_len);
+
+        // Skip if highlight is entirely before current position or invalid
+        if span_end_in_content <= current_pos || span_start_in_content >= span_end_in_content {
+            continue;
+        }
+
+        // Add gap before this highlight if needed
+        let actual_start = span_start_in_content.max(current_pos);
+        if actual_start > current_pos {
+            runs.push(TextRun {
+                len: actual_start - current_pos,
+                font: font.clone(),
+                color: default_color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            });
+        }
+
+        // Add the highlighted portion
+        let highlight_len = span_end_in_content - actual_start;
+        if highlight_len > 0 {
+            let color = syntax_theme
+                .color_for_capture(&highlight.capture_name)
+                .unwrap_or(default_color);
+            runs.push(TextRun {
+                len: highlight_len,
+                font: font.clone(),
+                color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            });
+        }
+
+        current_pos = span_end_in_content;
+    }
+
+    // Add remaining unhighlighted content
+    if current_pos < content_len {
+        runs.push(TextRun {
+            len: content_len - current_pos,
+            font: font.clone(),
+            color: default_color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        });
+    }
+
+    // Safety check: ensure total length matches content
+    let total_len: usize = runs.iter().map(|r| r.len).sum();
+    if total_len != content_len {
+        // Fallback to single default run if something went wrong
+        return vec![TextRun {
+            len: content_len,
+            font: font.clone(),
+            color: default_color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }];
+    }
+
+    runs
 }

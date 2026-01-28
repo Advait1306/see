@@ -1,4 +1,5 @@
 use super::super::git::{compute_hunks, compute_line_diffs, LineDiff};
+use crate::syntax::{highlights_for_lines, HighlightSpan, Language};
 use git2::{Oid, Repository};
 use gpui::prelude::*;
 use gpui::*;
@@ -9,6 +10,7 @@ use std::io::{self, BufReader, BufWriter};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
+use tree_sitter::{Parser, Tree};
 
 /// A line in a unified diff view
 #[derive(Debug, Clone)]
@@ -83,6 +85,12 @@ pub struct Buffer {
     repository: Option<Arc<Repository>>,
     /// Tracked HEAD commit for detecting when diffs need recomputing
     head_oid: Option<Oid>,
+    /// Language for syntax highlighting
+    language: Option<Arc<Language>>,
+    /// Parsed syntax tree
+    syntax_tree: Option<Tree>,
+    /// Tree-sitter parser instance
+    parser: Option<Parser>,
 }
 
 impl EventEmitter<BufferEvent> for Buffer {}
@@ -113,6 +121,9 @@ impl Buffer {
             diff_lines: Vec::new(),
             repository,
             head_oid,
+            language: None,
+            syntax_tree: None,
+            parser: None,
         };
 
         // Compute initial diffs
@@ -139,6 +150,24 @@ impl Buffer {
         .detach();
 
         Ok(buffer)
+    }
+
+    pub fn unsupported(path: PathBuf) -> Self {
+        Self {
+            rope: Rope::from_str(""),
+            file_path: path,
+            saved_mtime: None,
+            is_dirty: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            line_diffs: Vec::new(),
+            diff_lines: Vec::new(),
+            repository: None,
+            head_oid: None,
+            language: None,
+            syntax_tree: None,
+            parser: None,
+        }
     }
 
     fn check_and_reload_if_changed(&mut self, cx: &mut Context<Self>) {
@@ -207,6 +236,7 @@ impl Buffer {
 
         self.rope.insert(offset, text);
         self.is_dirty = true;
+        self.parse_syntax();
         cx.emit(BufferEvent::Changed);
         cx.notify();
     }
@@ -236,6 +266,7 @@ impl Buffer {
 
             self.rope.remove(start..end);
             self.is_dirty = true;
+            self.parse_syntax();
             cx.emit(BufferEvent::Changed);
             cx.notify();
         }
@@ -508,5 +539,36 @@ impl Buffer {
         }
 
         lines
+    }
+
+    pub fn set_language(&mut self, lang: Arc<Language>) {
+        let mut parser = Parser::new();
+        parser.set_language(&lang.grammar()).ok();
+        self.parser = Some(parser);
+        self.language = Some(lang);
+        self.parse_syntax();
+    }
+
+    fn parse_syntax(&mut self) {
+        let Some(ref mut parser) = self.parser else { return };
+        let source: String = self.rope.slice(..).into();
+        self.syntax_tree = parser.parse(source.as_bytes(), None);
+    }
+
+    pub fn line_to_byte(&self, line: usize) -> usize {
+        if line >= self.rope.len_lines() {
+            return self.rope.len_bytes();
+        }
+        self.rope.line_to_byte(line)
+    }
+
+    pub fn highlights_for_visible_lines(&self, start_line: usize, end_line: usize) -> Vec<HighlightSpan> {
+        let Some(ref tree) = self.syntax_tree else {
+            return Vec::new();
+        };
+        let Some(ref lang) = self.language else {
+            return Vec::new();
+        };
+        highlights_for_lines(tree, &lang.highlights_query, &self.rope, start_line, end_line)
     }
 }
