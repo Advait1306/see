@@ -248,9 +248,18 @@ impl FileStore {
 
     pub fn search_files(&self, query: &str) -> Vec<PathBuf> {
         let searchable_files = self.files.iter().filter(|path| {
-            !path.components().any(|component| {
+            let components: Vec<_> = path.components().collect();
+            // Check all components except the last (filename) for exclusions
+            let parent_components = if components.len() > 1 {
+                &components[..components.len() - 1]
+            } else {
+                &[]
+            };
+
+            !parent_components.iter().any(|component| {
                 let name = component.as_os_str().to_string_lossy();
-                EXCLUDED_FROM_SEARCH.contains(&name.as_ref())
+                // Exclude files in hidden folders or other excluded directories
+                name.starts_with('.') || EXCLUDED_FROM_SEARCH.contains(&name.as_ref())
             })
         });
 
