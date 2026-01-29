@@ -5,7 +5,7 @@ use super::element::EditorElement;
 use super::input::handle_key;
 use super::selection::Selection;
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, PADDING};
-use crate::stores::{Buffer, BufferEvent, DiffLine, EditorState, EditorStore};
+use crate::stores::{Buffer, BufferEvent, DiffLine, EditorState, EditorStore, OpenBufferError};
 use crate::types::{EditorTabConfig, SelectionPhase, Tab, TabConfig};
 use gpui::prelude::*;
 use gpui::*;
@@ -27,8 +27,16 @@ pub struct EditorViewOptions {
     pub diff_mode: bool,
 }
 
+/// Reason why buffer couldn't be loaded
+#[derive(Clone)]
+pub enum BufferError {
+    NotFound,
+    UnsupportedFormat(String),
+}
+
 pub struct EditorView {
     pub(crate) buffer: Option<Entity<Buffer>>,
+    pub(crate) buffer_error: Option<BufferError>,
     pub(crate) file_path: PathBuf,
     pub(crate) cursor_line: usize,
     pub(crate) cursor_col: usize,
@@ -51,13 +59,19 @@ impl EditorView {
     pub fn new(file_path: PathBuf, options: EditorViewOptions, cx: &mut Context<Self>) -> Self {
         // Get or create buffer from EditorStore
         let editor_store = EditorStore::global(cx);
-        let buffer = editor_store
+        let result = editor_store
             .update(cx, |store, cx| store.open_buffer(file_path.clone(), cx));
 
-        // Handle case where file doesn't exist
+        let (buffer, buffer_error) = match result {
+            Ok(buf) => (Some(buf), None),
+            Err(OpenBufferError::NotFound) => (None, Some(BufferError::NotFound)),
+            Err(OpenBufferError::UnsupportedFormat(msg)) => (None, Some(BufferError::UnsupportedFormat(msg))),
+        };
+
         let Some(buffer) = buffer else {
             return Self {
                 buffer: None,
+                buffer_error,
                 file_path,
                 cursor_line: 0,
                 cursor_col: 0,
@@ -96,6 +110,7 @@ impl EditorView {
 
             Self {
                 buffer: Some(buffer),
+                buffer_error: None,
                 file_path,
                 cursor_line: 0,
                 cursor_col: 0,
@@ -157,6 +172,7 @@ impl EditorView {
 
             Self {
                 buffer: Some(buffer),
+                buffer_error: None,
                 file_path,
                 cursor_line: 0,
                 cursor_col: 0,
@@ -362,6 +378,21 @@ impl Render for EditorView {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
 
+            let (title, subtitle) = match &self.buffer_error {
+                Some(BufferError::NotFound) => (
+                    format!("File not found: {}", file_name),
+                    "The file may have been moved or deleted.".to_string(),
+                ),
+                Some(BufferError::UnsupportedFormat(msg)) => (
+                    "Unable to display file".to_string(),
+                    msg.clone(),
+                ),
+                None => (
+                    format!("Cannot open: {}", file_name),
+                    "An unknown error occurred.".to_string(),
+                ),
+            };
+
             return div()
                 .id("editor-wrapper")
                 .track_focus(&focus_handle)
@@ -380,13 +411,13 @@ impl Render for EditorView {
                             div()
                                 .text_color(cx.theme().muted_foreground)
                                 .text_sm()
-                                .child(format!("File not found: {}", file_name))
+                                .child(title)
                         )
                         .child(
                             div()
                                 .text_color(cx.theme().muted_foreground.opacity(0.6))
                                 .text_xs()
-                                .child(self.file_path.display().to_string())
+                                .child(subtitle)
                         )
                 )
                 .into_any_element();

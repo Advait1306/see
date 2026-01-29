@@ -4,6 +4,7 @@ mod config;
 mod constants;
 mod file_watcher;
 mod stores;
+mod syntax;
 mod terminal;
 mod types;
 mod ui;
@@ -14,6 +15,7 @@ use gpui::*;
 use gpui_component::Root;
 use std::borrow::Cow;
 use stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
+use syntax::LanguageRegistry;
 use ui::WindowView;
 
 fn main() {
@@ -37,6 +39,7 @@ fn main() {
             .add_fonts(vec![Cow::Borrowed(font_data.as_slice())])
             .expect("Failed to load Paper Mono font");
 
+        LanguageRegistry::init(cx);
         EditorStore::init(cx);
         TerminalStore::init(cx);
         WorkspaceStore::init(cx);
