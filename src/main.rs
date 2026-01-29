@@ -27,6 +27,7 @@ fn main() {
 
         // Register keybindings
         commands::register_keybindings(cx);
+        ui::command_menu::register_command_menu_keybindings(cx);
 
         // Handle app-level Quit action
         cx.on_action(|_: &Quit, cx| {

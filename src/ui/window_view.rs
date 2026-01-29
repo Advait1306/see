@@ -1,6 +1,7 @@
 use crate::commands::*;
 use crate::config;
 use crate::stores::{PaneStore, RightSidebarPanel, WindowStore, Workspace};
+use crate::ui::command_menu::CommandMenu;
 use crate::ui::diff_list::DiffList;
 use crate::ui::file_tree::FileTree;
 use crate::ui::pane_group::PaneGroupView;
@@ -15,25 +16,28 @@ pub struct WindowView {
     workspace_sidebar: Entity<WorkspaceSidebar>,
     file_tree: Entity<FileTree>,
     diff_list: Entity<DiffList>,
+    command_menu: Entity<CommandMenu>,
     focus_handle: FocusHandle,
 }
 
 impl WindowView {
     pub fn new(
         window_store: Entity<WindowStore>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let workspace_sidebar =
             cx.new(|cx| WorkspaceSidebar::new(window_store.clone(), cx));
         let file_tree = cx.new(|cx| FileTree::new(window_store.clone(), cx));
         let diff_list = cx.new(|cx| DiffList::new(window_store.clone(), cx));
+        let command_menu = cx.new(|cx| CommandMenu::new(window_store.clone(), window, cx));
 
         Self {
             window_store,
             workspace_sidebar,
             file_tree,
             diff_list,
+            command_menu,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -229,6 +233,11 @@ impl Render for WindowView {
                     this.focus_active_content(window, cx);
                 }
             }))
+            .on_action(cx.listener(|this, _: &ShowCommandMenu, window, cx| {
+                this.command_menu.update(cx, |menu, cx| {
+                    menu.toggle(window, cx);
+                });
+            }))
             .size_full()
             .flex()
             .flex_col()
@@ -358,6 +367,8 @@ impl Render for WindowView {
                         el.child(self.render_right_sidebar(right_sidebar, sidebar_collapsed, cx))
                     })
             })
+            // Command menu overlay
+            .child(self.command_menu.clone())
     }
 }
 
