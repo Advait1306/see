@@ -62,7 +62,6 @@ impl EditorView {
         let result = editor_store
             .update(cx, |store, cx| store.open_buffer(file_path.clone(), cx));
 
-        // Handle errors
         let (buffer, buffer_error) = match result {
             Ok(buf) => (Some(buf), None),
             Err(OpenBufferError::NotFound) => (None, Some(BufferError::NotFound)),

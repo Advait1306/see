@@ -1,5 +1,5 @@
 use super::super::git::{compute_hunks, compute_line_diffs, LineDiff};
-use crate::syntax::{highlights_for_lines, HighlightSpan, Language};
+use crate::syntax::{highlights_for_lines, HighlightSpan, Language, LanguageRegistry};
 use git2::{Oid, Repository};
 use gpui::prelude::*;
 use gpui::*;
@@ -112,7 +112,7 @@ impl Buffer {
 
         let mut buffer = Self {
             rope,
-            file_path: path,
+            file_path: path.clone(),
             saved_mtime: mtime,
             is_dirty: false,
             undo_stack: Vec::new(),
@@ -128,6 +128,12 @@ impl Buffer {
 
         // Compute initial diffs
         buffer.recompute_diffs();
+
+        // Detect and set language based on file extension
+        let registry = LanguageRegistry::global(cx);
+        if let Some(lang) = registry.read(cx).language_for_path(&path) {
+            buffer.set_language(lang);
+        }
 
         // Start polling for external changes
         cx.spawn(async move |this, cx| {
@@ -150,24 +156,6 @@ impl Buffer {
         .detach();
 
         Ok(buffer)
-    }
-
-    pub fn unsupported(path: PathBuf) -> Self {
-        Self {
-            rope: Rope::from_str(""),
-            file_path: path,
-            saved_mtime: None,
-            is_dirty: false,
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
-            line_diffs: Vec::new(),
-            diff_lines: Vec::new(),
-            repository: None,
-            head_oid: None,
-            language: None,
-            syntax_tree: None,
-            parser: None,
-        }
     }
 
     fn check_and_reload_if_changed(&mut self, cx: &mut Context<Self>) {
@@ -562,13 +550,9 @@ impl Buffer {
         self.rope.line_to_byte(line)
     }
 
-    pub fn highlights_for_visible_lines(&self, start_line: usize, end_line: usize) -> Vec<HighlightSpan> {
-        let Some(ref tree) = self.syntax_tree else {
-            return Vec::new();
-        };
-        let Some(ref lang) = self.language else {
-            return Vec::new();
-        };
-        highlights_for_lines(tree, &lang.highlights_query, &self.rope, start_line, end_line)
+    pub fn highlights_for_visible_lines(&self, start_line: usize, end_line: usize) -> Option<Vec<HighlightSpan>> {
+        let tree = self.syntax_tree.as_ref()?;
+        let lang = self.language.as_ref()?;
+        Some(highlights_for_lines(tree, &lang.highlights_query, &self.rope, start_line, end_line))
     }
 }

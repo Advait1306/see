@@ -18,8 +18,6 @@ use stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
 use syntax::LanguageRegistry;
 use ui::WindowView;
 
-impl Global for LanguageRegistry {}
-
 fn main() {
     env_logger::init();
 
@@ -41,10 +39,7 @@ fn main() {
             .add_fonts(vec![Cow::Borrowed(font_data.as_slice())])
             .expect("Failed to load Paper Mono font");
 
-        // Initialize language registry for syntax highlighting
-        let language_registry = LanguageRegistry::new();
-        cx.set_global(language_registry);
-
+        LanguageRegistry::init(cx);
         EditorStore::init(cx);
         TerminalStore::init(cx);
         WorkspaceStore::init(cx);

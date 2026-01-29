@@ -1,6 +1,11 @@
+use gpui::*;
 use std::path::Path;
 use std::sync::Arc;
 use tree_sitter::{Language as TSLanguage, Query};
+
+pub struct GlobalLanguageRegistry(pub Entity<LanguageRegistry>);
+
+impl Global for GlobalLanguageRegistry {}
 
 pub struct Language {
     pub name: &'static str,
@@ -41,6 +46,15 @@ pub struct LanguageRegistry {
 }
 
 impl LanguageRegistry {
+    pub fn init(cx: &mut App) {
+        let registry = cx.new(|_cx| Self::new());
+        cx.set_global(GlobalLanguageRegistry(registry));
+    }
+
+    pub fn global(cx: &App) -> Entity<Self> {
+        cx.global::<GlobalLanguageRegistry>().0.clone()
+    }
+
     pub fn new() -> Self {
         let mut registry = Self { languages: Vec::new() };
         registry.register_builtin_languages();

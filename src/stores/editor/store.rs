@@ -1,5 +1,4 @@
 use super::buffer::Buffer;
-use crate::syntax::LanguageRegistry;
 use gpui::prelude::*;
 use gpui::*;
 use std::collections::HashMap;
@@ -49,40 +48,16 @@ impl EditorStore {
             return Ok(buffer.clone());
         }
 
-        // Check if file exists before attempting to load
         if !canonical_path.exists() {
             return Err(OpenBufferError::NotFound);
         }
 
         let path_for_closure = canonical_path.clone();
-        let mut load_error: Option<String> = None;
         let buffer = cx.new(|cx| {
-            match Buffer::load(path_for_closure.clone(), cx) {
-                Ok(buf) => buf,
-                Err(e) => {
-                    eprintln!("[DEBUG] Failed to load {:?}: {}", path_for_closure, e);
-                    load_error = Some(e.to_string());
-                    Buffer::unsupported(path_for_closure)
-                }
-            }
+            Buffer::load(path_for_closure, cx).expect("Failed to load buffer")
         });
 
-        if let Some(err) = load_error {
-            return Err(OpenBufferError::UnsupportedFormat(err));
-        }
-
-        // Detect and set language based on file extension
-        let registry = cx.global::<LanguageRegistry>();
-        if let Some(lang) = registry.language_for_path(&canonical_path) {
-            eprintln!("[DEBUG] Setting language for {:?}: {}", canonical_path, lang.name);
-            buffer.update(cx, |buf, _cx| {
-                buf.set_language(lang);
-            });
-        } else {
-            eprintln!("[DEBUG] No language found for {:?}", canonical_path);
-        }
-
-        self.buffers.insert(canonical_path.clone(), buffer.clone());
+        self.buffers.insert(canonical_path, buffer.clone());
 
         cx.emit(EditorStoreEvent::BufferOpened);
         Ok(buffer)

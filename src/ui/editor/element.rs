@@ -212,8 +212,9 @@ impl Element for EditorElement {
             }
         }
 
-        // Get syntax highlights for visible lines
-        let highlights = buffer.highlights_for_visible_lines(self.scroll_offset, self.scroll_offset + visible_line_count);
+        let highlights = buffer
+            .highlights_for_visible_lines(self.scroll_offset, self.scroll_offset + visible_line_count)
+            .unwrap_or_default();
 
         // Calculate line number width (4 characters minimum)
         let line_number_chars = format!("{}", line_count).len().max(4);
@@ -320,7 +321,7 @@ impl Element for EditorElement {
         let added_color = theme.success;
         let modified_color = theme.warning;
         let deleted_color = theme.danger;
-        let syntax_theme = SyntaxTheme::from_theme(theme);
+        let syntax_theme = SyntaxTheme::new();
 
         let font = Font {
             family: "Paper Mono".into(),

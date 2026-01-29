@@ -50,7 +50,7 @@ fn hex_to_hsla(hex: &str) -> Hsla {
 }
 
 impl SyntaxTheme {
-    pub fn from_theme(_theme: &gpui_component::theme::Theme) -> Self {
+    pub fn new() -> Self {
         // One Light theme colors from Zed
         let mut colors = HashMap::new();
 
@@ -214,5 +214,11 @@ impl SyntaxTheme {
         }
 
         None
+    }
+}
+
+impl Default for SyntaxTheme {
+    fn default() -> Self {
+        Self::new()
     }
 }
