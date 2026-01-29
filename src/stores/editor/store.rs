@@ -1,7 +1,9 @@
 use super::buffer::Buffer;
 use gpui::prelude::*;
 use gpui::*;
+use ropey::Rope;
 use std::collections::HashMap;
+use std::io::BufReader;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
@@ -52,9 +54,18 @@ impl EditorStore {
             return Err(OpenBufferError::NotFound);
         }
 
+        // TODO: This pre-validation reads the file twice - once here and once in Buffer::load.
+        // We do this because cx.new() requires a closure that returns T, not Result<T, E>.
+        // Proper error handling would require rearchitecting Buffer to not need its own
+        // context/entity pointer for the background polling task.
+        let file = std::fs::File::open(&canonical_path)
+            .map_err(|e| OpenBufferError::UnsupportedFormat(e.to_string()))?;
+        Rope::from_reader(BufReader::new(file))
+            .map_err(|e| OpenBufferError::UnsupportedFormat(e.to_string()))?;
+
         let path_for_closure = canonical_path.clone();
         let buffer = cx.new(|cx| {
-            Buffer::load(path_for_closure, cx).expect("Failed to load buffer")
+            Buffer::load(path_for_closure, cx).expect("Pre-validated file should load")
         });
 
         self.buffers.insert(canonical_path, buffer.clone());

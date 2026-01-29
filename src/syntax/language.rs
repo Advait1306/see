@@ -8,6 +8,7 @@ pub struct GlobalLanguageRegistry(pub Entity<LanguageRegistry>);
 impl Global for GlobalLanguageRegistry {}
 
 pub struct Language {
+    #[allow(dead_code)]
     pub name: &'static str,
     pub extensions: &'static [&'static str],
     grammar: TSLanguage,

@@ -65,6 +65,9 @@ pub(crate) enum DiffVisibleLine {
         new_num: Option<usize>,
         tag: DiffLineTag,
         content: String,
+        /// Byte offset in the current buffer (for syntax highlighting).
+        /// Only available for Insert and Equal lines that have a new_line_num.
+        byte_offset: Option<usize>,
     },
     Collapsed {
         count: usize,
@@ -145,18 +148,35 @@ impl Element for EditorElement {
         if let Some((display_lines, max_old, max_new)) = diff_mode_data {
             // Diff mode prepaint
             let total_lines = display_lines.len();
+            let buffer = self.buffer.read(cx);
 
+            // Collect visible lines and track which buffer lines need highlighting
             let mut diff_visible_lines = Vec::new();
+            let mut min_buffer_line: Option<usize> = None;
+            let mut max_buffer_line: Option<usize> = None;
+
             for i in 0..visible_line_count {
                 let line_idx = self.scroll_offset + i;
                 if line_idx < total_lines {
                     match &display_lines[line_idx] {
                         DiffDisplayLine::Line(line) => {
+                            // For Insert and Equal lines, we have a new_line_num that maps to the buffer
+                            let byte_offset = if let Some(new_num) = line.new_line_num {
+                                let line_idx = new_num.saturating_sub(1); // new_line_num is 1-indexed
+                                // Track range for highlight fetching
+                                min_buffer_line = Some(min_buffer_line.map_or(line_idx, |m| m.min(line_idx)));
+                                max_buffer_line = Some(max_buffer_line.map_or(line_idx, |m| m.max(line_idx)));
+                                Some(buffer.line_to_byte(line_idx))
+                            } else {
+                                None
+                            };
+
                             diff_visible_lines.push(DiffVisibleLine::Line {
                                 old_num: line.old_line_num,
                                 new_num: line.new_line_num,
                                 tag: line.tag,
                                 content: line.content.clone(),
+                                byte_offset,
                             });
                         }
                         DiffDisplayLine::Collapsed { count, .. } => {
@@ -165,6 +185,15 @@ impl Element for EditorElement {
                     }
                 }
             }
+
+            // Get syntax highlights for the visible buffer lines
+            let highlights = if let (Some(min_line), Some(max_line)) = (min_buffer_line, max_buffer_line) {
+                buffer
+                    .highlights_for_visible_lines(min_line, max_line + 1)
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
 
             // Calculate line number widths for diff mode
             let old_num_chars = format!("{}", max_old).len().max(3);
@@ -189,7 +218,7 @@ impl Element for EditorElement {
                 diff_mode_lines: diff_visible_lines,
                 diff_old_num_width,
                 diff_new_num_width,
-                highlights: Vec::new(),
+                highlights,
             };
         }
 
@@ -349,6 +378,7 @@ impl Element for EditorElement {
                 sidebar_color,
                 added_color,
                 deleted_color,
+                &syntax_theme,
             );
             return;
         }
@@ -526,6 +556,7 @@ impl EditorElement {
         sidebar_color: Hsla,
         added_color: Hsla,
         deleted_color: Hsla,
+        syntax_theme: &SyntaxTheme,
     ) {
         let origin = bounds.origin;
 
@@ -571,7 +602,7 @@ impl EditorElement {
             let y = origin.y + px(PADDING + (idx as f32 * CELL_HEIGHT));
 
             match line {
-                DiffVisibleLine::Line { old_num, new_num, tag, content } => {
+                DiffVisibleLine::Line { old_num, new_num, tag, content, byte_offset } => {
                     // Paint line background based on tag
                     let (line_bg, prefix, prefix_color) = match tag {
                         DiffLineTag::Insert => (Some(added_bg), "+", added_color),
@@ -663,7 +694,7 @@ impl EditorElement {
                         cx,
                     );
 
-                    // Paint content (clipped to content area)
+                    // Paint content with syntax highlighting (clipped to content area)
                     if !content.is_empty() {
                         let content_area_bounds = Bounds {
                             origin: origin + gpui::point(px(content_x), Pixels::ZERO),
@@ -673,18 +704,32 @@ impl EditorElement {
                             },
                         };
                         window.with_content_mask(Some(ContentMask { bounds: content_area_bounds }), |window| {
-                            let content_run = TextRun {
-                                len: content.len(),
-                                font: font.clone(),
-                                color: foreground_color,
-                                background_color: None,
-                                underline: None,
-                                strikethrough: None,
+                            let text_runs = if let Some(offset) = byte_offset {
+                                // We have a byte offset, so we can apply syntax highlighting
+                                build_highlighted_text_runs(
+                                    content,
+                                    *offset,
+                                    &layout.highlights,
+                                    syntax_theme,
+                                    foreground_color,
+                                    font,
+                                )
+                            } else {
+                                // No byte offset (deleted lines), use plain foreground color
+                                vec![TextRun {
+                                    len: content.len(),
+                                    font: font.clone(),
+                                    color: foreground_color,
+                                    background_color: None,
+                                    underline: None,
+                                    strikethrough: None,
+                                }]
                             };
+
                             let shaped_content = window.text_system().shape_line(
                                 content.clone().into(),
                                 font_size,
-                                &[content_run],
+                                &text_runs,
                                 None,
                             );
                             let _ = shaped_content.paint(
