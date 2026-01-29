@@ -1,4 +1,4 @@
-use crate::stores::{FileEntry, WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
+use crate::stores::{FileEntry, FileStore, WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
 use crate::ui::EditorView;
 use crate::ui::pane::TabItem;
 use gpui::prelude::*;
@@ -52,6 +52,7 @@ impl ListDelegate for FileTreeDelegate {
     ) -> Option<Self::Item> {
         let entry = self.entries.get(ix.row)?;
         let is_expanded = entry.is_expanded;
+        let is_pending = entry.is_pending;
         let depth = entry.depth;
         let is_dir = entry.is_dir;
         let name = entry.name.clone();
@@ -99,7 +100,11 @@ impl ListDelegate for FileTreeDelegate {
                     .child(
                         div()
                             .text_sm()
-                            .text_color(foreground_color)
+                            .text_color(if is_pending {
+                                muted_color
+                            } else {
+                                foreground_color
+                            })
                             .overflow_hidden()
                             .text_ellipsis()
                             .child(name),
@@ -182,16 +187,20 @@ impl FileTree {
     fn file_tree_entries(&self, cx: &App) -> Vec<FileEntry> {
         if let Some(workspace) = self.active_workspace(cx) {
             let ws = workspace.read(cx);
-            ws.file_tree_store().read(cx).entries().clone()
+            ws.file_store().read(cx).visible_entries()
         } else {
             Vec::new()
         }
     }
 
+    fn file_store(&self, cx: &App) -> Option<Entity<FileStore>> {
+        self.active_workspace(cx)
+            .map(|ws| ws.read(cx).file_store().clone())
+    }
+
     fn toggle_expanded(&self, path: &PathBuf, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.active_workspace(cx) {
-            let file_tree_store = workspace.read(cx).file_tree_store().clone();
-            file_tree_store.update(cx, |store, cx| {
+        if let Some(file_store) = self.file_store(cx) {
+            file_store.update(cx, |store, cx| {
                 store.toggle_expanded(path, cx);
             });
         }

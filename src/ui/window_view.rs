@@ -1,6 +1,9 @@
 use crate::commands::*;
 use crate::config;
-use crate::stores::{PaneStore, RightSidebarPanel, WindowStore, Workspace};
+use crate::stores::{
+    FileStore, FileStoreEvent, PaneStore, RightSidebarPanel, ScanState, WindowStore,
+    WindowStoreEvent, Workspace,
+};
 use crate::ui::command_menu::CommandMenu;
 use crate::ui::diff_list::DiffList;
 use crate::ui::file_tree::FileTree;
@@ -18,6 +21,7 @@ pub struct WindowView {
     diff_list: Entity<DiffList>,
     command_menu: Entity<CommandMenu>,
     focus_handle: FocusHandle,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl WindowView {
@@ -32,13 +36,40 @@ impl WindowView {
         let diff_list = cx.new(|cx| DiffList::new(window_store.clone(), cx));
         let command_menu = cx.new(|cx| CommandMenu::new(window_store.clone(), window, cx));
 
-        Self {
+        let mut subscriptions = Vec::new();
+
+        // Subscribe to window store events to update file store subscription
+        subscriptions.push(cx.subscribe(&window_store, |this, _store, event, cx| {
+            if let WindowStoreEvent::ActiveWorkspaceChanged = event {
+                this.subscribe_to_file_store(cx);
+            }
+        }));
+
+        let mut view = Self {
             window_store,
             workspace_sidebar,
             file_tree,
             diff_list,
             command_menu,
             focus_handle: cx.focus_handle(),
+            _subscriptions: subscriptions,
+        };
+
+        view.subscribe_to_file_store(cx);
+        view
+    }
+
+    fn subscribe_to_file_store(&mut self, cx: &mut Context<Self>) {
+        if let Some(file_store) = self.active_file_store(cx) {
+            self._subscriptions
+                .push(cx.subscribe(&file_store, |_this, _store, event, cx| {
+                    if matches!(
+                        event,
+                        FileStoreEvent::ScanStarted | FileStoreEvent::ScanCompleted
+                    ) {
+                        cx.notify();
+                    }
+                }));
         }
     }
 
@@ -54,6 +85,17 @@ impl WindowView {
     fn active_pane_group_view(&self, cx: &App) -> Option<Entity<PaneGroupView>> {
         self.active_workspace(cx)
             .map(|ws| ws.read(cx).pane_group_view().clone())
+    }
+
+    fn active_file_store(&self, cx: &App) -> Option<Entity<FileStore>> {
+        self.active_workspace(cx)
+            .map(|ws| ws.read(cx).file_store().clone())
+    }
+
+    fn scan_state(&self, cx: &App) -> ScanState {
+        self.active_file_store(cx)
+            .map(|fs| fs.read(cx).scan_state())
+            .unwrap_or_default()
     }
 
     pub fn focus_active_content(&self, window: &mut Window, cx: &App) {
@@ -367,6 +409,56 @@ impl Render for WindowView {
                         el.child(self.render_right_sidebar(right_sidebar, sidebar_collapsed, cx))
                     })
             })
+            // Footer
+            .child(
+                div()
+                    .id("footer")
+                    .h(px(32.0))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .px(px(12.0))
+                    .bg(theme.sidebar)
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .when(
+                        matches!(self.scan_state(cx), ScanState::Scanning { .. }),
+                        |el| {
+                            if let ScanState::Scanning { scanned_files } = self.scan_state(cx) {
+                                el.child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(8.0))
+                                        .child(
+                                            Icon::new(IconName::Loader)
+                                                .xsmall()
+                                                .text_color(theme.muted_foreground)
+                                                .with_animation(
+                                                    "rotate",
+                                                    Animation::new(std::time::Duration::from_secs(1))
+                                                        .repeat(),
+                                                    |icon, delta| {
+                                                        icon.transform(Transformation::rotate(
+                                                            percentage(delta),
+                                                        ))
+                                                    },
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground)
+                                                .child(format!("Scanning files... {}", scanned_files)),
+                                        ),
+                                )
+                            } else {
+                                el
+                            }
+                        },
+                    ),
+            )
             // Command menu overlay
             .child(self.command_menu.clone())
     }

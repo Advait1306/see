@@ -1,25 +1,20 @@
-use crate::stores::{WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
+use crate::stores::{FileStore, WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
 use crate::ui::pane::TabItem;
 use crate::ui::EditorView;
 use gpui::prelude::*;
-use gpui::*;
+use gpui::{actions, div, px, hsla, App, ElementId, Entity, FocusHandle, Focusable, IntoElement, KeyBinding, Keystroke, MouseButton, ParentElement, Render, ScrollHandle, Styled, Subscription, Window};
 use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::kbd::Kbd;
 use gpui_component::theme::ActiveTheme;
 use gpui_component::{Icon, IconName, Sizable};
 use std::path::PathBuf;
-
-pub struct FileItem {
-    pub path: PathBuf,
-    pub display_path: String,
-}
 
 pub struct CommandMenu {
     window_store: Entity<WindowStore>,
     visible: bool,
     input_state: Entity<InputState>,
     query: String,
-    all_files: Vec<FileItem>,
-    filtered_indices: Vec<(usize, i32)>, // (index, score)
+    filtered_files: Vec<PathBuf>,
     selected_index: usize,
     scroll_handle: ScrollHandle,
     focus_handle: FocusHandle,
@@ -43,7 +38,7 @@ impl CommandMenu {
             cx.subscribe_in(&input_state, window, |this, state, event, _window, cx| {
                 if let InputEvent::Change = event {
                     this.query = state.read(cx).value().to_string();
-                    this.filter_files();
+                    this.refresh_filtered_files(cx);
                     this.selected_index = 0;
                     cx.notify();
                 }
@@ -51,7 +46,7 @@ impl CommandMenu {
 
         let window_store_subscription = cx.subscribe(&window_store, |this, _store, event, cx| {
             if let WindowStoreEvent::ActiveWorkspaceChanged = event {
-                this.refresh_files(cx);
+                this.refresh_filtered_files(cx);
                 this.subscribe_to_active_workspace(cx);
             }
         });
@@ -61,8 +56,7 @@ impl CommandMenu {
             visible: false,
             input_state,
             query: String::new(),
-            all_files: Vec::new(),
-            filtered_indices: Vec::new(),
+            filtered_files: Vec::new(),
             selected_index: 0,
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
@@ -73,7 +67,7 @@ impl CommandMenu {
         };
 
         menu.subscribe_to_active_workspace(cx);
-        menu.refresh_files(cx);
+        menu.refresh_filtered_files(cx);
         menu
     }
 
@@ -81,7 +75,7 @@ impl CommandMenu {
         self._workspace_subscription = self.active_workspace(cx).map(|workspace| {
             cx.subscribe(&workspace, |this, _workspace, event, cx| {
                 if matches!(event, WorkspaceEvent::FileTreeChanged) {
-                    this.refresh_files(cx);
+                    this.refresh_filtered_files(cx);
                 }
             })
         });
@@ -91,82 +85,18 @@ impl CommandMenu {
         self.window_store.read(cx).active_workspace(cx)
     }
 
-    fn refresh_files(&mut self, cx: &App) {
-        self.all_files.clear();
+    fn file_store(&self, cx: &App) -> Option<Entity<FileStore>> {
+        self.active_workspace(cx)
+            .map(|ws| ws.read(cx).file_store().clone())
+    }
 
-        let Some(workspace) = self.active_workspace(cx) else {
+    fn refresh_filtered_files(&mut self, cx: &App) {
+        let Some(file_store) = self.file_store(cx) else {
+            self.filtered_files.clear();
             return;
         };
 
-        let workspace_path = workspace.read(cx).path.clone();
-        self.scan_directory_recursive(&workspace_path, &workspace_path);
-        self.filter_files();
-    }
-
-    fn scan_directory_recursive(&mut self, dir: &PathBuf, workspace_root: &PathBuf) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-
-            // Skip hidden files and common ignored directories
-            if name.starts_with('.') || name == "node_modules" || name == "target" {
-                continue;
-            }
-
-            if path.is_dir() {
-                self.scan_directory_recursive(&path, workspace_root);
-            } else {
-                let display_path = path
-                    .strip_prefix(workspace_root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .to_string();
-
-                self.all_files.push(FileItem {
-                    path,
-                    display_path,
-                });
-            }
-        }
-    }
-
-    fn filter_files(&mut self) {
-        let query = self.query.to_lowercase();
-
-        if query.is_empty() {
-            // Show all files sorted alphabetically when no query
-            self.filtered_indices = self
-                .all_files
-                .iter()
-                .enumerate()
-                .map(|(i, _)| (i, 0))
-                .collect();
-            self.filtered_indices.sort_by(|a, b| {
-                self.all_files[a.0].display_path.cmp(&self.all_files[b.0].display_path)
-            });
-        } else {
-            // Fuzzy match and sort by score
-            self.filtered_indices = self
-                .all_files
-                .iter()
-                .enumerate()
-                .filter_map(|(i, file)| {
-                    let score = fuzzy_match(&query, &file.display_path.to_lowercase());
-                    if score > 0 {
-                        Some((i, score))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            // Sort by score (higher is better)
-            self.filtered_indices.sort_by(|a, b| b.1.cmp(&a.1));
-        }
+        self.filtered_files = file_store.read(cx).search_files(&self.query);
     }
 
     pub fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -184,7 +114,7 @@ impl CommandMenu {
         self.previous_focus = window.focused(cx);
         self.visible = true;
         self.query.clear();
-        self.refresh_files(cx);
+        self.refresh_filtered_files(cx);
         self.selected_index = 0;
         self.input_state.update(cx, |state, cx| {
             state.set_value("", window, cx);
@@ -202,7 +132,7 @@ impl CommandMenu {
     }
 
     fn select_next(&mut self, cx: &mut Context<Self>) {
-        if !self.filtered_indices.is_empty() && self.selected_index < self.filtered_indices.len() - 1 {
+        if !self.filtered_files.is_empty() && self.selected_index < self.filtered_files.len() - 1 {
             self.selected_index += 1;
             self.scroll_handle.scroll_to_item(self.selected_index);
             cx.notify();
@@ -218,8 +148,7 @@ impl CommandMenu {
     }
 
     fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(&(file_index, _)) = self.filtered_indices.get(self.selected_index) {
-            let path = self.all_files[file_index].path.clone();
+        if let Some(path) = self.filtered_files.get(self.selected_index).cloned() {
             self.open_file(path, cx);
         }
         self.hide(window, cx);
@@ -250,7 +179,8 @@ impl CommandMenu {
     fn render_item(
         &self,
         list_index: usize,
-        file: &FileItem,
+        file_path: &PathBuf,
+        workspace_path: &PathBuf,
         is_selected: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -261,8 +191,13 @@ impl CommandMenu {
             theme.transparent
         };
 
-        // Split path into directory and filename for display
-        let path = std::path::Path::new(&file.display_path);
+        let display_path = file_path
+            .strip_prefix(workspace_path)
+            .unwrap_or(file_path)
+            .to_string_lossy()
+            .to_string();
+
+        let path = std::path::Path::new(&display_path);
         let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
         let dir = path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
 
@@ -318,18 +253,23 @@ impl Render for CommandMenu {
         }
 
         let theme = cx.theme();
+        let workspace_path = self
+            .active_workspace(cx)
+            .map(|ws| ws.read(cx).path.clone())
+            .unwrap_or_default();
+
         let filtered_items: Vec<_> = self
-            .filtered_indices
+            .filtered_files
             .iter()
             .enumerate()
-            .take(100) // Limit displayed items for performance
-            .map(|(list_idx, &(file_idx, _))| {
+            .take(100)
+            .map(|(list_idx, file_path)| {
                 let is_selected = list_idx == self.selected_index;
-                self.render_item(list_idx, &self.all_files[file_idx], is_selected, cx)
+                self.render_item(list_idx, file_path, &workspace_path, is_selected, cx)
             })
             .collect();
 
-        let file_count = self.filtered_indices.len();
+        let file_count = self.filtered_files.len();
 
         div()
             .id("command-menu-overlay")
@@ -391,7 +331,7 @@ impl Render for CommandMenu {
                             .track_scroll(&self.scroll_handle)
                             .p(px(8.0))
                             .children(filtered_items)
-                            .when(self.filtered_indices.is_empty(), |el| {
+                            .when(self.filtered_files.is_empty(), |el| {
                                 el.child(
                                     div()
                                         .p(px(12.0))
@@ -417,9 +357,20 @@ impl Render for CommandMenu {
                             )
                             .child(
                                 div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
                                     .text_xs()
                                     .text_color(theme.muted_foreground)
-                                    .child("↑↓ navigate • ↵ open • esc close"),
+                                    .child(Kbd::new(Keystroke::parse("up").unwrap()))
+                                    .child(Kbd::new(Keystroke::parse("down").unwrap()))
+                                    .child("navigate")
+                                    .child("•")
+                                    .child(Kbd::new(Keystroke::parse("enter").unwrap()))
+                                    .child("open")
+                                    .child("•")
+                                    .child(Kbd::new(Keystroke::parse("escape").unwrap()))
+                                    .child("close"),
                             ),
                     ),
             )
@@ -430,47 +381,6 @@ impl Render for CommandMenu {
 impl Focusable for CommandMenu {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
-    }
-}
-
-fn fuzzy_match(pattern: &str, text: &str) -> i32 {
-    let pattern_chars: Vec<char> = pattern.chars().collect();
-    let text_chars: Vec<char> = text.chars().collect();
-
-    if pattern_chars.is_empty() {
-        return 1;
-    }
-
-    let mut pattern_idx = 0;
-    let mut score = 0;
-    let mut last_match_idx: Option<usize> = None;
-    let mut consecutive_bonus = 0;
-
-    for (i, &c) in text_chars.iter().enumerate() {
-        if pattern_idx < pattern_chars.len() && c == pattern_chars[pattern_idx] {
-            score += 1;
-
-            // Bonus for consecutive matches
-            if let Some(last) = last_match_idx {
-                if i == last + 1 {
-                    consecutive_bonus += 2;
-                }
-            }
-
-            // Bonus for matching at word boundaries
-            if i == 0 || text_chars[i - 1] == '/' || text_chars[i - 1] == '_' || text_chars[i - 1] == '-' {
-                score += 3;
-            }
-
-            last_match_idx = Some(i);
-            pattern_idx += 1;
-        }
-    }
-
-    if pattern_idx == pattern_chars.len() {
-        score + consecutive_bonus
-    } else {
-        0
     }
 }
 
