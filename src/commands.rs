@@ -58,7 +58,7 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-l", ToggleFileTree, None),         // Right sidebar (files)
         KeyBinding::new("cmd-g", ToggleDiffList, None),         // Right sidebar (git)
         // Command menu
-        KeyBinding::new("cmd-k", ShowCommandMenu, None),
+        KeyBinding::new("cmd-p", ShowCommandMenu, None),
         KeyBinding::new("escape", HideCommandMenu, Some("CommandMenu")),
         // Tab key handling (only when Terminal has focus)
         KeyBinding::new("tab", SendTabToTerminal, Some("Terminal")),
