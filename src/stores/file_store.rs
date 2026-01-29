@@ -41,6 +41,7 @@ struct FileStoreConfig {
     expanded_paths: HashSet<PathBuf>,
 }
 
+#[derive(Default)]
 struct ScanBatch {
     files: Vec<PathBuf>,
     dirs: Vec<PathBuf>,
@@ -332,40 +333,50 @@ async fn scan_directory_streaming(
     skip_dirs: &[&str],
     tx: smol::channel::Sender<ScanBatch>,
 ) {
-    let mut stack = vec![root.clone()];
+    use walkdir::WalkDir;
 
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+    let mut batch = ScanBatch {
+        files: Vec::new(),
+        dirs: Vec::new(),
+        pending: Vec::new(),
+    };
+
+    let mut walker = WalkDir::new(root).follow_links(false).into_iter();
+
+    while let Some(result) = walker.next() {
+        let Ok(entry) = result else { continue };
+        let path = entry.path().to_path_buf();
+        let name = entry.file_name().to_string_lossy();
+
+        // walkdir yields the root as first entry - skip it since it's already tracked as workspace_path
+        if entry.depth() == 0 {
             continue;
-        };
-
-        let mut batch = ScanBatch {
-            files: Vec::new(),
-            dirs: Vec::new(),
-            pending: Vec::new(),
-        };
-
-        for entry in entries.filter_map(|e| e.ok()) {
-            let entry_path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-
-            if name.starts_with('.') {
-                continue;
-            }
-
-            if entry_path.is_dir() {
-                batch.dirs.push(entry_path.clone());
-
-                if skip_dirs.contains(&name.as_str()) {
-                    batch.pending.push(entry_path);
-                } else {
-                    stack.push(entry_path);
-                }
-            } else {
-                batch.files.push(entry_path);
-            }
         }
 
+        if entry.file_type().is_dir() {
+            batch.dirs.push(path.clone());
+
+            if skip_dirs.contains(&name.as_ref()) {
+                batch.pending.push(path);
+                walker.skip_current_dir();
+            }
+        } else {
+            batch.files.push(path);
+        }
+
+        // Stream batches every 100 entries
+        if batch.files.len() + batch.dirs.len() >= 100 {
+            let _ = tx.send(std::mem::take(&mut batch)).await;
+            batch = ScanBatch {
+                files: Vec::new(),
+                dirs: Vec::new(),
+                pending: Vec::new(),
+            };
+        }
+    }
+
+    // Send remaining entries
+    if !batch.files.is_empty() || !batch.dirs.is_empty() || !batch.pending.is_empty() {
         let _ = tx.send(batch).await;
     }
 }

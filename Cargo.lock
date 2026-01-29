@@ -557,6 +557,7 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]
