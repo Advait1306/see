@@ -9,6 +9,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub enum WorkspaceStoreEvent {
     WorkspacesChanged,
+    WorkspaceRemoved { next_workspace_id: Option<String> },
     WorkspaceUpdated(String),
     PaneLayoutChanged(String),
 }
@@ -156,6 +157,39 @@ impl WorkspaceStore {
 
     pub fn first_workspace_id(&self) -> Option<&String> {
         self.workspace_order.first()
+    }
+
+    /// Returns the ID of the workspace that should be selected after removing the given workspace.
+    /// If the workspace is not the last one, returns the next workspace.
+    /// If it is the last one, returns the previous workspace.
+    /// Returns None if this is the only workspace or the workspace doesn't exist.
+    pub fn next_workspace_after_removal(&self, id: &str) -> Option<String> {
+        let idx = self.workspace_order.iter().position(|ws_id| ws_id == id)?;
+
+        if self.workspace_order.len() <= 1 {
+            return None;
+        }
+
+        if idx < self.workspace_order.len() - 1 {
+            // Not the last workspace, select the next one
+            Some(self.workspace_order[idx + 1].clone())
+        } else {
+            // Last workspace, select the previous one
+            Some(self.workspace_order[idx - 1].clone())
+        }
+    }
+
+    pub fn remove_workspace(&mut self, id: &str, cx: &mut Context<Self>) {
+        // Calculate the next workspace before removal
+        let next_workspace_id = self.next_workspace_after_removal(id);
+
+        if self.workspaces.remove(id).is_some() {
+            self.workspace_order.retain(|ws_id| ws_id != id);
+            self.save(cx);
+            cx.emit(WorkspaceStoreEvent::WorkspaceRemoved { next_workspace_id });
+            cx.emit(WorkspaceStoreEvent::WorkspacesChanged);
+            cx.notify();
+        }
     }
 }
 

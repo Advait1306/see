@@ -88,11 +88,17 @@ impl Render for AppRoot {
             self.state = AppState::Main { view: window_view };
         }
 
-        match &self.state {
+        let content = match &self.state {
             AppState::Onboarding { view, .. } => view.clone().into_any_element(),
             AppState::Main { view } => view.clone().into_any_element(),
             AppState::TransitionToMain => unreachable!(),
-        }
+        };
+
+        div()
+            .size_full()
+            .child(content)
+            .children(Root::render_dialog_layer(window, cx))
+            .children(Root::render_notification_layer(window, cx))
     }
 }
 
@@ -123,11 +129,9 @@ fn main() {
         TerminalStore::init(cx);
         WorkspaceStore::init(cx);
 
-        // TODO: Remove this override after testing
-        let onboarding_complete = false;
-        // let onboarding_complete = GlobalKvStore::global(cx)
-        //     .get("onboarding_complete")
-        //     .is_some_and(|v| v == "true");
+        let onboarding_complete = GlobalKvStore::global(cx)
+            .get("onboarding_complete")
+            .is_some_and(|v| v == "true");
 
         cx.open_window(
             WindowOptions {

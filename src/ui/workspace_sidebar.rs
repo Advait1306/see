@@ -1,25 +1,28 @@
 use crate::stores::{WindowStore, WindowStoreEvent, WorkspaceStore, WorkspaceStoreEvent};
 use gpui::prelude::*;
 use gpui::*;
-use gpui_component::Side;
+use gpui_component::button::{Button, ButtonVariant, ButtonVariants};
+use gpui_component::dialog::DialogButtonProps;
+use gpui_component::menu::{PopupMenu, PopupMenuItem};
 use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
+use gpui_component::{IconName, Side, Sizable, WindowExt};
 
 pub struct WorkspaceSidebar {
     window_store: Entity<WindowStore>,
     focus_handle: FocusHandle,
+    context_menu: Option<(Point<Pixels>, Entity<PopupMenu>)>,
+    _context_menu_subscription: Option<Subscription>,
     _workspace_store_subscription: Subscription,
     _window_store_subscription: Subscription,
 }
 
 impl WorkspaceSidebar {
-    pub fn new(
-        window_store: Entity<WindowStore>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(window_store: Entity<WindowStore>, cx: &mut Context<Self>) -> Self {
         let workspace_store = WorkspaceStore::global(cx);
         let workspace_store_sub = cx.subscribe(&workspace_store, |_this, _store, event, cx| {
             match event {
-                WorkspaceStoreEvent::WorkspacesChanged => {
+                WorkspaceStoreEvent::WorkspacesChanged
+                | WorkspaceStoreEvent::WorkspaceRemoved { .. } => {
                     cx.notify();
                 }
                 WorkspaceStoreEvent::WorkspaceUpdated(_) => {
@@ -41,6 +44,8 @@ impl WorkspaceSidebar {
         Self {
             window_store,
             focus_handle: cx.focus_handle(),
+            context_menu: None,
+            _context_menu_subscription: None,
             _workspace_store_subscription: workspace_store_sub,
             _window_store_subscription: window_store_sub,
         }
@@ -75,6 +80,65 @@ impl WorkspaceSidebar {
         })
         .detach();
     }
+
+    fn show_context_menu(
+        &mut self,
+        workspace_id: String,
+        workspace_name: String,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let menu = PopupMenu::build(window, cx, move |menu, _window, _cx| {
+            let id = workspace_id.clone();
+            let name = workspace_name.clone();
+            menu.item(
+                PopupMenuItem::new("Delete")
+                    .icon(IconName::Delete)
+                    .on_click(move |_, window, cx| {
+                        Self::confirm_delete_workspace(id.clone(), name.clone(), window, cx);
+                    }),
+            )
+        });
+
+        let subscription = cx.subscribe(&menu, |this, _menu, _event: &DismissEvent, cx| {
+            this.context_menu = None;
+            this._context_menu_subscription = None;
+            cx.notify();
+        });
+
+        self.context_menu = Some((position, menu));
+        self._context_menu_subscription = Some(subscription);
+        cx.notify();
+    }
+
+    fn confirm_delete_workspace(
+        workspace_id: String,
+        workspace_name: String,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let id = workspace_id.clone();
+            dialog
+                .title(format!("Delete \"{}\"?", workspace_name))
+                .child(
+                    "This workspace will be removed from the sidebar. Your files will not be affected.",
+                )
+                .confirm()
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("Delete")
+                        .ok_variant(ButtonVariant::Danger),
+                )
+                .on_ok(move |_, _, cx| {
+                    WorkspaceStore::global(cx).update(cx, |store, cx| {
+                        store.remove_workspace(&id, cx);
+                    });
+                    true
+                })
+        });
+    }
 }
 
 impl Render for WorkspaceSidebar {
@@ -91,6 +155,8 @@ impl Render for WorkspaceSidebar {
             })
             .collect();
 
+        let context_menu = self.context_menu.clone();
+
         div()
             .id("workspace-sidebar")
             .size_full()
@@ -99,13 +165,40 @@ impl Render for WorkspaceSidebar {
             .child(
                 Sidebar::new(Side::Left).w_full().child(
                     SidebarMenu::new()
-                        .children(workspaces.into_iter().map(|(id, name, is_active)| {
-                            SidebarMenuItem::new(name)
-                                .active(is_active)
-                                .on_click(cx.listener(move |this, _, _window, cx| {
-                                    this.select_workspace(id.clone(), cx);
-                                }))
-                        }))
+                        .children(workspaces.into_iter().enumerate().map(
+                            |(idx, (id, name, is_active))| {
+                                let id_for_click = id.clone();
+                                let id_for_menu = id.clone();
+                                let name_for_menu = name.clone();
+
+                                SidebarMenuItem::new(name)
+                                    .active(is_active)
+                                    .on_click(cx.listener(move |this, _, _window, cx| {
+                                        this.select_workspace(id_for_click.clone(), cx);
+                                    }))
+                                    .suffix(
+                                        Button::new(("ws-menu", idx))
+                                            .xsmall()
+                                            .ghost()
+                                            .icon(IconName::Ellipsis)
+                                            .on_click(cx.listener({
+                                                let id = id_for_menu.clone();
+                                                let name = name_for_menu.clone();
+                                                move |this, _event: &ClickEvent, window, cx| {
+                                                    cx.stop_propagation();
+                                                    let pos = window.mouse_position();
+                                                    this.show_context_menu(
+                                                        id.clone(),
+                                                        name.clone(),
+                                                        pos,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            })),
+                                    )
+                            },
+                        ))
                         .child(
                             SidebarMenuItem::new("+ Add Workspace").on_click(cx.listener(
                                 |this, _, _window, cx| {
@@ -115,6 +208,17 @@ impl Render for WorkspaceSidebar {
                         ),
                 ),
             )
+            .when_some(context_menu, |el, (position, menu)| {
+                el.child(
+                    deferred(
+                        anchored()
+                            .position(position)
+                            .anchor(Corner::TopLeft)
+                            .child(menu),
+                    )
+                    .with_priority(1),
+                )
+            })
     }
 }
 

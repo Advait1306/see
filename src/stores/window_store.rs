@@ -72,11 +72,16 @@ impl WindowStore {
     fn on_workspace_event(&mut self, event: &WorkspaceStoreEvent, cx: &mut Context<Self>) {
         match event {
             WorkspaceStoreEvent::WorkspacesChanged => {
+                cx.notify();
+            }
+            WorkspaceStoreEvent::WorkspaceRemoved { next_workspace_id } => {
+                // Check if the removed workspace was the active one
                 if let Some(id) = &self.active_workspace_id {
                     let store = WorkspaceStore::global(cx);
                     let store = store.read(cx);
                     if store.get_workspace(id).is_none() {
-                        self.active_workspace_id = store.first_workspace_id().cloned();
+                        // Active workspace was removed, switch to the suggested next one
+                        self.active_workspace_id = next_workspace_id.clone();
                         self.save();
                         cx.emit(WindowStoreEvent::ActiveWorkspaceChanged);
                     }
