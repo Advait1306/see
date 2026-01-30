@@ -70,10 +70,7 @@ impl LanguageRegistry {
             tree_sitter_rust::LANGUAGE.into(),
             include_str!("queries/rust.scm"),
         ) {
-            eprintln!("[DEBUG] Registered language: rust");
             self.languages.push(Arc::new(lang));
-        } else {
-            eprintln!("[DEBUG] Failed to register language: rust");
         }
 
         // JavaScript

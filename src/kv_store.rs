@@ -57,6 +57,7 @@ impl KvStore {
         .expect("Failed to set KV value");
     }
 
+    #[allow(dead_code)]
     pub fn delete(&self, key: &str) {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM kv WHERE key = ?1", [key])

@@ -1,11 +1,11 @@
 use crate::stores::{WindowStore, WindowStoreEvent, WorkspaceStore, WorkspaceStoreEvent};
 use gpui::prelude::*;
-use gpui::*;
+use gpui::{FontWeight, SharedString, *};
 use gpui_component::button::{Button, ButtonVariant, ButtonVariants};
 use gpui_component::dialog::DialogButtonProps;
 use gpui_component::menu::{PopupMenu, PopupMenuItem};
-use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
-use gpui_component::{IconName, Side, Sizable, WindowExt};
+use gpui_component::sidebar::SidebarMenuItem;
+use gpui_component::{ActiveTheme, IconName, Sizable, WindowExt};
 
 pub struct WorkspaceSidebar {
     window_store: Entity<WindowStore>,
@@ -162,25 +162,58 @@ impl Render for WorkspaceSidebar {
             .size_full()
             .overflow_hidden()
             .track_focus(&self.focus_handle)
+            .bg(cx.theme().sidebar)
+            .text_color(cx.theme().sidebar_foreground)
+            .border_r_1()
+            .border_color(cx.theme().border)
             .child(
-                Sidebar::new(Side::Left).w_full().child(
-                    SidebarMenu::new()
-                        .children(workspaces.into_iter().enumerate().map(
+                div()
+                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .children(workspaces.into_iter().enumerate().map(
                             |(idx, (id, name, is_active))| {
                                 let id_for_click = id.clone();
                                 let id_for_menu = id.clone();
                                 let name_for_menu = name.clone();
+                                let group_name: SharedString = format!("ws-item-{}", idx).into();
 
-                                SidebarMenuItem::new(name)
-                                    .active(is_active)
+                                div()
+                                    .id(("workspace-item", idx))
+                                    .group(group_name.clone())
+                                    .w_full()
+                                    .h_7()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap_2()
+                                    .px_2()
+                                    .rounded(cx.theme().radius)
+                                    .text_sm()
+                                    .cursor_pointer()
+                                    .when(!is_active, |this| {
+                                        this.hover(|s| {
+                                            s.bg(cx.theme().sidebar_accent.opacity(0.8))
+                                                .text_color(cx.theme().sidebar_accent_foreground)
+                                        })
+                                    })
+                                    .when(is_active, |this| {
+                                        this.font_weight(FontWeight::MEDIUM)
+                                            .bg(cx.theme().sidebar_accent)
+                                            .text_color(cx.theme().sidebar_accent_foreground)
+                                    })
                                     .on_click(cx.listener(move |this, _, _window, cx| {
                                         this.select_workspace(id_for_click.clone(), cx);
                                     }))
-                                    .suffix(
+                                    .child(div().flex_1().overflow_x_hidden().child(name))
+                                    .child(
                                         Button::new(("ws-menu", idx))
                                             .xsmall()
                                             .ghost()
                                             .icon(IconName::Ellipsis)
+                                            .invisible()
+                                            .group_hover(group_name, |s| s.visible())
                                             .on_click(cx.listener({
                                                 let id = id_for_menu.clone();
                                                 let name = name_for_menu.clone();
@@ -206,7 +239,6 @@ impl Render for WorkspaceSidebar {
                                 },
                             )),
                         ),
-                ),
             )
             .when_some(context_menu, |el, (position, menu)| {
                 el.child(
