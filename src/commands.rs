@@ -39,6 +39,12 @@ actions!(
     [PrevDiff, NextDiff,]
 );
 
+// Onboarding commands
+actions!(
+    august,
+    [OnboardingNext, OnboardingBack,]
+);
+
 /// Register all application keybindings
 pub fn register_keybindings(cx: &mut App) {
     cx.bind_keys([
@@ -61,5 +67,9 @@ pub fn register_keybindings(cx: &mut App) {
         // Diff carousel navigation
         KeyBinding::new("j", PrevDiff, Some("DiffCarousel")),
         KeyBinding::new("k", NextDiff, Some("DiffCarousel")),
+        // Onboarding navigation
+        KeyBinding::new("enter", OnboardingNext, Some("Onboarding")),
+        KeyBinding::new("right", OnboardingNext, Some("Onboarding")),
+        KeyBinding::new("left", OnboardingBack, Some("Onboarding")),
     ]);
 }

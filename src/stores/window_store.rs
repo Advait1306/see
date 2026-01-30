@@ -188,6 +188,15 @@ impl WindowStore {
         cx.notify();
     }
 
+    pub fn set_right_sidebar(&mut self, panel: RightSidebarPanel, cx: &mut Context<Self>) {
+        if self.right_sidebar != panel {
+            self.right_sidebar = panel;
+            self.save();
+            cx.emit(WindowStoreEvent::UiStateChanged);
+            cx.notify();
+        }
+    }
+
     fn save(&self) {
         let state = WindowUiState {
             active_workspace_id: self.active_workspace_id.clone(),
