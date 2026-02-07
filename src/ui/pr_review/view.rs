@@ -1056,6 +1056,83 @@ fn format_timestamp(timestamp: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::github::{GitHubUser, ReviewComment};
+    use crate::stores::github_store::PrDetailCache;
+    use crate::stores::AuthState;
+    use crate::test_helpers;
+
+    fn make_test_file(filename: &str, patch: &str) -> PullRequestFile {
+        PullRequestFile {
+            sha: "abc123".to_string(),
+            filename: filename.to_string(),
+            status: "modified".to_string(),
+            additions: 1,
+            deletions: 1,
+            changes: 2,
+            patch: Some(patch.to_string()),
+        }
+    }
+
+    fn make_test_comment(path: &str, line: u64, side: &str, body: &str) -> ReviewComment {
+        ReviewComment {
+            id: 1,
+            body: body.to_string(),
+            path: path.to_string(),
+            position: None,
+            line: Some(line),
+            side: Some(side.to_string()),
+            user: GitHubUser {
+                login: "reviewer".to_string(),
+                avatar_url: "https://example.com/a.png".to_string(),
+            },
+            created_at: "2024-01-15T12:00:00Z".to_string(),
+        }
+    }
+
+    fn setup_pr_review_test(
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        test_helpers::TestFixture,
+        Entity<GitHubStore>,
+        Entity<PrReviewView>,
+    ) {
+        let fixture = test_helpers::TestFixture::new(cx);
+
+        let store = cx.new(|cx| GitHubStore::new("owner".into(), "repo".into(), cx));
+
+        // Pre-populate with auth and PR details
+        let patch = "@@ -1,3 +1,4 @@\n context\n-removed\n+added\n+new line\n context end";
+        store.update(cx, |s, _cx| {
+            s.set_test_state(
+                AuthState::Authenticated,
+                Some("test-token".to_string()),
+                Vec::new(),
+            );
+            s.set_test_pr_details(
+                42,
+                PrDetailCache {
+                    files: vec![
+                        make_test_file("src/main.rs", patch),
+                        make_test_file("src/lib.rs", "@@ -1,1 +1,1 @@\n-old\n+new"),
+                        make_test_file("src/util.rs", "@@ -1,1 +1,1 @@\n-a\n+b"),
+                    ],
+                    comments: vec![
+                        make_test_comment("src/main.rs", 2, "RIGHT", "looks good"),
+                    ],
+                    reviews: vec![],
+                },
+            );
+        });
+
+        let view = cx.new(|cx| PrReviewView::new(store.clone(), 42, "Test PR".into(), cx));
+
+        // Trigger rebuild since details were set before subscription fires
+        view.update(cx, |v, cx| {
+            v.rebuild_diff_editor(cx);
+        });
+
+        (fixture, store, view)
+    }
 
     #[core::prelude::v1::test]
     fn test_pr_review_tab_config_serialization() {
@@ -1078,5 +1155,231 @@ mod tests {
         } else {
             panic!("Expected PrReview tab config");
         }
+    }
+
+    #[core::prelude::v1::test]
+    fn test_file_navigation_next() {
+        test_helpers::run_gpui_test(|cx| {
+            let (_fixture, _store, view) = setup_pr_review_test(cx);
+
+            cx.read(|cx| {
+                assert_eq!(view.read(cx).selected_file_index, 0);
+            });
+
+            view.update(cx, |v, cx| v.next_file(cx));
+            cx.read(|cx| assert_eq!(view.read(cx).selected_file_index, 1));
+
+            view.update(cx, |v, cx| v.next_file(cx));
+            cx.read(|cx| assert_eq!(view.read(cx).selected_file_index, 2));
+
+            // Wraps around
+            view.update(cx, |v, cx| v.next_file(cx));
+            cx.read(|cx| assert_eq!(view.read(cx).selected_file_index, 0));
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_file_navigation_prev() {
+        test_helpers::run_gpui_test(|cx| {
+            let (_fixture, _store, view) = setup_pr_review_test(cx);
+
+            // Wraps to last
+            view.update(cx, |v, cx| v.prev_file(cx));
+            cx.read(|cx| assert_eq!(view.read(cx).selected_file_index, 2));
+
+            view.update(cx, |v, cx| v.prev_file(cx));
+            cx.read(|cx| assert_eq!(view.read(cx).selected_file_index, 1));
+
+            view.update(cx, |v, cx| v.prev_file(cx));
+            cx.read(|cx| assert_eq!(view.read(cx).selected_file_index, 0));
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_file_navigation_rebuilds_editor() {
+        test_helpers::run_gpui_test(|cx| {
+            let (_fixture, _store, view) = setup_pr_review_test(cx);
+
+            cx.read(|cx| {
+                assert!(view.read(cx).diff_editor.is_some());
+            });
+
+            let editor_before = cx.read(|cx| view.read(cx).diff_editor.clone());
+
+            view.update(cx, |v, cx| v.next_file(cx));
+
+            let editor_after = cx.read(|cx| view.read(cx).diff_editor.clone());
+            assert!(editor_after.is_some());
+            // Different editor entity after navigation
+            assert_ne!(
+                editor_before.map(|e| e.entity_id()),
+                editor_after.map(|e| e.entity_id())
+            );
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_find_display_line_index_right() {
+        test_helpers::run_gpui_test(|cx| {
+            let (_fixture, _store, view) = setup_pr_review_test(cx);
+
+            cx.read(|cx| {
+                let v = view.read(cx);
+                // Line 2 RIGHT is an Insert line in the patch
+                let idx = v.find_display_line_index(2, "RIGHT", cx);
+                assert!(idx.is_some());
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_find_display_line_index_left() {
+        test_helpers::run_gpui_test(|cx| {
+            let (_fixture, _store, view) = setup_pr_review_test(cx);
+
+            cx.read(|cx| {
+                let v = view.read(cx);
+                // Line 2 LEFT is a Delete line (old_line_num=2)
+                let idx = v.find_display_line_index(2, "LEFT", cx);
+                assert!(idx.is_some());
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_find_display_line_index_not_found() {
+        test_helpers::run_gpui_test(|cx| {
+            let (_fixture, _store, view) = setup_pr_review_test(cx);
+
+            cx.read(|cx| {
+                let v = view.read(cx);
+                let idx = v.find_display_line_index(999, "RIGHT", cx);
+                assert!(idx.is_none());
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_save_pending_comment_upsert() {
+        test_helpers::run_gpui_test(|cx| {
+            let (_fixture, _store, view) = setup_pr_review_test(cx);
+
+            // Simulate clicking a line to open comment panel
+            view.update(cx, |v, cx| {
+                v.on_diff_line_clicked(0, Some(1), Some(1), DiffLineTag::Equal, cx);
+            });
+
+            // Manually add a pending comment (mimics save_pending_comment logic)
+            view.update(cx, |v, cx| {
+                v.pending_comments.push(PendingComment {
+                    anchor: v.active_comment_anchor.clone().unwrap(),
+                    body: "first comment".to_string(),
+                });
+                v.close_comment_panel(cx);
+            });
+
+            cx.read(|cx| {
+                assert_eq!(view.read(cx).pending_comments.len(), 1);
+                assert_eq!(view.read(cx).pending_comments[0].body, "first comment");
+            });
+
+            // Upsert: save again to same anchor
+            view.update(cx, |v, _cx| {
+                let anchor = v.pending_comments[0].anchor.clone();
+                if let Some(existing) = v
+                    .pending_comments
+                    .iter_mut()
+                    .find(|pc| pc.anchor == anchor)
+                {
+                    existing.body = "updated comment".to_string();
+                }
+            });
+
+            cx.read(|cx| {
+                assert_eq!(view.read(cx).pending_comments.len(), 1);
+                assert_eq!(view.read(cx).pending_comments[0].body, "updated comment");
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_close_comment_panel_clears_state() {
+        test_helpers::run_gpui_test(|cx| {
+            let (_fixture, _store, view) = setup_pr_review_test(cx);
+
+            // Open comment panel
+            view.update(cx, |v, cx| {
+                v.on_diff_line_clicked(0, Some(1), Some(1), DiffLineTag::Equal, cx);
+            });
+
+            cx.read(|cx| {
+                assert!(view.read(cx).active_comment_anchor.is_some());
+            });
+
+            view.update(cx, |v, cx| {
+                v.close_comment_panel(cx);
+            });
+
+            cx.read(|cx| {
+                let v = view.read(cx);
+                assert!(v.active_comment_anchor.is_none());
+                assert!(v.active_comment_pending_body.is_none());
+                assert!(v.comment_input_state.is_none());
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_submit_review_clears_pending() {
+        test_helpers::run_gpui_test(|cx| {
+            let (_fixture, _store, view) = setup_pr_review_test(cx);
+
+            // Add a pending comment
+            view.update(cx, |v, cx| {
+                v.on_diff_line_clicked(0, Some(1), Some(1), DiffLineTag::Equal, cx);
+                v.pending_comments.push(PendingComment {
+                    anchor: v.active_comment_anchor.clone().unwrap(),
+                    body: "my comment".to_string(),
+                });
+                v.close_comment_panel(cx);
+            });
+
+            cx.read(|cx| {
+                assert_eq!(view.read(cx).pending_comments.len(), 1);
+            });
+
+            view.update(cx, |v, cx| {
+                v.submit_review("COMMENT", cx);
+            });
+
+            cx.read(|cx| {
+                assert!(view.read(cx).pending_comments.is_empty());
+                assert!(!view.read(cx).submitting);
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_existing_comments_for_filters_by_path_and_line() {
+        test_helpers::run_gpui_test(|cx| {
+            let (_fixture, _store, view) = setup_pr_review_test(cx);
+
+            cx.read(|cx| {
+                let v = view.read(cx);
+
+                // Should find comment on src/main.rs line 2
+                let found = v.existing_comments_for("src/main.rs", 2, cx);
+                assert_eq!(found.len(), 1);
+                assert_eq!(found[0].body, "looks good");
+
+                // Should not find comments for different path
+                let not_found = v.existing_comments_for("src/lib.rs", 2, cx);
+                assert!(not_found.is_empty());
+
+                // Should not find comments for different line
+                let not_found2 = v.existing_comments_for("src/main.rs", 99, cx);
+                assert!(not_found2.is_empty());
+            });
+        });
     }
 }

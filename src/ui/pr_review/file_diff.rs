@@ -183,4 +183,69 @@ mod tests {
             .collect();
         assert_eq!(headers.len(), 2);
     }
+
+    // ---- patch_to_editor_diff_lines tests ----
+
+    #[core::prelude::v1::test]
+    fn test_patch_to_editor_skips_headers() {
+        let patch = "@@ -1,2 +1,3 @@\n context\n-removed\n+added\n+new";
+        let (_content, diff_lines, _map) = patch_to_editor_diff_lines(patch);
+
+        assert!(diff_lines
+            .iter()
+            .all(|l| l.tag != DiffLineTag::Equal || l.content != "@@ -1,2 +1,3 @@"));
+        // 4 non-header lines
+        assert_eq!(diff_lines.len(), 4);
+    }
+
+    #[core::prelude::v1::test]
+    fn test_patch_to_editor_content_string() {
+        let patch = "@@ -1,2 +1,2 @@\n context\n-removed\n+added";
+        let (content, _diff_lines, _map) = patch_to_editor_diff_lines(patch);
+
+        assert_eq!(content, "context\nremoved\nadded");
+    }
+
+    #[core::prelude::v1::test]
+    fn test_patch_to_editor_tag_mapping() {
+        let patch = "@@ -1,3 +1,3 @@\n context\n-removed\n+added";
+        let (_content, diff_lines, _map) = patch_to_editor_diff_lines(patch);
+
+        assert_eq!(diff_lines[0].tag, DiffLineTag::Equal);
+        assert_eq!(diff_lines[1].tag, DiffLineTag::Delete);
+        assert_eq!(diff_lines[2].tag, DiffLineTag::Insert);
+    }
+
+    #[core::prelude::v1::test]
+    fn test_patch_to_editor_line_numbers() {
+        let patch = "@@ -10,2 +20,2 @@\n context\n-removed";
+        let (_content, diff_lines, _map) = patch_to_editor_diff_lines(patch);
+
+        // Context line: old=10, new=20
+        assert_eq!(diff_lines[0].old_line_num, Some(10));
+        assert_eq!(diff_lines[0].new_line_num, Some(20));
+        // Deletion: old=11, new=None
+        assert_eq!(diff_lines[1].old_line_num, Some(11));
+        assert_eq!(diff_lines[1].new_line_num, None);
+    }
+
+    #[core::prelude::v1::test]
+    fn test_patch_to_editor_buffer_line_map() {
+        let patch = "@@ -1,2 +1,3 @@\n context\n-removed\n+added\n+new";
+        let (_content, _diff_lines, map) = patch_to_editor_diff_lines(patch);
+
+        // Sequential indices: 0, 1, 2, 3
+        assert_eq!(map, vec![Some(0), Some(1), Some(2), Some(3)]);
+    }
+
+    #[core::prelude::v1::test]
+    fn test_patch_to_editor_multiple_hunks() {
+        let patch = "@@ -1,1 +1,1 @@\n-old1\n+new1\n@@ -10,1 +10,1 @@\n-old2\n+new2";
+        let (_content, diff_lines, map) = patch_to_editor_diff_lines(patch);
+
+        // 4 non-header lines total
+        assert_eq!(diff_lines.len(), 4);
+        // Buffer indices should be sequential across hunks
+        assert_eq!(map, vec![Some(0), Some(1), Some(2), Some(3)]);
+    }
 }

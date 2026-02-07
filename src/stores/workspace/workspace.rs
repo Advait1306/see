@@ -106,6 +106,11 @@ impl Workspace {
     pub fn pane_group_view(&self) -> &Entity<PaneGroupView> {
         &self.pane_group_view
     }
+
+    #[cfg(test)]
+    pub fn set_github_store(&mut self, store: Option<Entity<GitHubStore>>) {
+        self.github_store = store;
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]

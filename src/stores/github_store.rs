@@ -527,6 +527,23 @@ impl GitHubStore {
         .detach();
     }
 
+    #[cfg(test)]
+    pub fn set_test_state(
+        &mut self,
+        auth_state: AuthState,
+        token: Option<String>,
+        pull_requests: Vec<PullRequest>,
+    ) {
+        self.auth_state = auth_state;
+        self.token = token;
+        self.pull_requests = pull_requests;
+    }
+
+    #[cfg(test)]
+    pub fn set_test_pr_details(&mut self, pr_number: u64, details: PrDetailCache) {
+        self.pr_details.insert(pr_number, details);
+    }
+
     pub fn submit_review(
         &mut self,
         pr_number: u64,
@@ -649,6 +666,108 @@ mod tests {
             cx.read(|cx| {
                 assert_eq!(store.read(cx).auth_state(), &AuthState::Authenticated);
                 assert_eq!(store.read(cx).token.as_deref(), Some("existing-token"));
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_pr_details_cache_roundtrip() {
+        test_helpers::run_gpui_test(|cx| {
+            let _fixture = test_helpers::TestFixture::new(cx);
+
+            let store = cx.new(|cx| GitHubStore::new("owner".into(), "repo".into(), cx));
+
+            store.update(cx, |store, _cx| {
+                store.pr_details.insert(
+                    42,
+                    PrDetailCache {
+                        files: vec![],
+                        comments: vec![],
+                        reviews: vec![],
+                    },
+                );
+            });
+
+            cx.read(|cx| {
+                let s = store.read(cx);
+                assert!(s.pr_details(42).is_some());
+                assert!(s.pr_details(42).unwrap().files.is_empty());
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_pr_details_returns_none_for_unknown() {
+        test_helpers::run_gpui_test(|cx| {
+            let _fixture = test_helpers::TestFixture::new(cx);
+
+            let store = cx.new(|cx| GitHubStore::new("owner".into(), "repo".into(), cx));
+
+            cx.read(|cx| {
+                assert!(store.read(cx).pr_details(999).is_none());
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_sign_out_clears_pr_details() {
+        test_helpers::run_gpui_test(|cx| {
+            let _fixture = test_helpers::TestFixture::new(cx);
+
+            let store = cx.new(|cx| GitHubStore::new("owner".into(), "repo".into(), cx));
+
+            store.update(cx, |store, _cx| {
+                store.pr_details.insert(
+                    1,
+                    PrDetailCache {
+                        files: vec![],
+                        comments: vec![],
+                        reviews: vec![],
+                    },
+                );
+            });
+
+            store.update(cx, |store, cx| {
+                store.sign_out(cx);
+            });
+
+            cx.read(|cx| {
+                assert!(store.read(cx).pr_details(1).is_none());
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_multiple_pr_details_independent() {
+        test_helpers::run_gpui_test(|cx| {
+            let _fixture = test_helpers::TestFixture::new(cx);
+
+            let store = cx.new(|cx| GitHubStore::new("owner".into(), "repo".into(), cx));
+
+            store.update(cx, |store, _cx| {
+                store.pr_details.insert(
+                    1,
+                    PrDetailCache {
+                        files: vec![],
+                        comments: vec![],
+                        reviews: vec![],
+                    },
+                );
+                store.pr_details.insert(
+                    2,
+                    PrDetailCache {
+                        files: vec![],
+                        comments: vec![],
+                        reviews: vec![],
+                    },
+                );
+            });
+
+            cx.read(|cx| {
+                let s = store.read(cx);
+                assert!(s.pr_details(1).is_some());
+                assert!(s.pr_details(2).is_some());
+                assert!(s.pr_details(3).is_none());
             });
         });
     }

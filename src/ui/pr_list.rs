@@ -538,7 +538,7 @@ impl Focusable for PrList {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stores::{RightSidebarPanel, WorkspaceStore};
+    use crate::stores::RightSidebarPanel;
 
     fn init_test_stores(cx: &mut gpui::TestAppContext) -> crate::test_helpers::TestFixture {
         let fixture = crate::test_helpers::TestFixture::new(cx);
@@ -588,6 +588,94 @@ mod tests {
                     window_store.read(cx).right_sidebar(),
                     RightSidebarPanel::Hidden
                 );
+            });
+        });
+    }
+
+    fn init_test_stores_with_github(
+        cx: &mut gpui::TestAppContext,
+    ) -> (crate::test_helpers::TestFixture, Entity<GitHubStore>) {
+        let fixture = crate::test_helpers::TestFixture::new(cx);
+        let gh_store = cx.new(|cx| GitHubStore::new("owner".into(), "repo".into(), cx));
+
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            crate::stores::TerminalStore::init(cx);
+            crate::stores::WorkspaceStore::init(cx);
+
+            let workspace_store = crate::stores::WorkspaceStore::global(cx);
+            let ws = workspace_store.update(cx, |store, cx| {
+                store.add_workspace("Test".to_string(), fixture.workspace_path(), cx)
+            });
+            ws.update(cx, |ws, _cx| {
+                ws.set_github_store(Some(gh_store.clone()));
+            });
+        });
+        (fixture, gh_store)
+    }
+
+    #[core::prelude::v1::test]
+    fn test_pr_list_reads_unauthenticated_state() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let (_fixture, _gh_store) = init_test_stores_with_github(cx);
+            let window_store = cx.new(|cx| WindowStore::new(cx));
+
+            let pr_list = cx.new(|cx| PrList::new(window_store.clone(), cx));
+
+            cx.read(|cx| {
+                let list = pr_list.read(cx);
+                let store = list.github_store(cx);
+                assert!(store.is_some());
+                let store = store.unwrap();
+                assert_eq!(store.read(cx).auth_state(), &AuthState::Unauthenticated);
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_pr_list_reads_authenticated_prs() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let (_fixture, gh_store) = init_test_stores_with_github(cx);
+
+            // Pre-populate with authenticated state and PRs
+            gh_store.update(cx, |store, _cx| {
+                store.set_test_state(
+                    AuthState::Authenticated,
+                    Some("test-token".to_string()),
+                    vec![crate::github::PullRequest {
+                        number: 42,
+                        title: "Test PR".to_string(),
+                        body: Some("Description".to_string()),
+                        state: "open".to_string(),
+                        draft: false,
+                        user: crate::github::GitHubUser {
+                            login: "testuser".to_string(),
+                            avatar_url: "https://example.com/a.png".to_string(),
+                        },
+                        head: crate::github::GitRef {
+                            sha: "abc".to_string(),
+                            ref_name: "feature".to_string(),
+                        },
+                        base: crate::github::GitRef {
+                            sha: "def".to_string(),
+                            ref_name: "main".to_string(),
+                        },
+                        created_at: "2024-01-01T00:00:00Z".to_string(),
+                        updated_at: "2024-01-02T00:00:00Z".to_string(),
+                    }],
+                );
+            });
+
+            let window_store = cx.new(|cx| WindowStore::new(cx));
+            let pr_list = cx.new(|cx| PrList::new(window_store.clone(), cx));
+
+            cx.read(|cx| {
+                let list = pr_list.read(cx);
+                let store = list.github_store(cx).unwrap();
+                let s = store.read(cx);
+                assert_eq!(s.auth_state(), &AuthState::Authenticated);
+                assert_eq!(s.pull_requests().len(), 1);
+                assert_eq!(s.pull_requests()[0].title, "Test PR");
             });
         });
     }
