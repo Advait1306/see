@@ -11,6 +11,7 @@ pub enum RightSidebarPanel {
     Hidden,
     FileTree,
     DiffList,
+    PrList,
 }
 
 #[derive(Clone)]
@@ -182,6 +183,16 @@ impl WindowStore {
         self.right_sidebar = match self.right_sidebar {
             RightSidebarPanel::DiffList => RightSidebarPanel::Hidden,
             _ => RightSidebarPanel::DiffList,
+        };
+        self.save();
+        cx.emit(WindowStoreEvent::UiStateChanged);
+        cx.notify();
+    }
+
+    pub fn toggle_pr_list(&mut self, cx: &mut Context<Self>) {
+        self.right_sidebar = match self.right_sidebar {
+            RightSidebarPanel::PrList => RightSidebarPanel::Hidden,
+            _ => RightSidebarPanel::PrList,
         };
         self.save();
         cx.emit(WindowStoreEvent::UiStateChanged);

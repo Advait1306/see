@@ -5,7 +5,7 @@ use super::element::EditorElement;
 use super::input::handle_key;
 use super::selection::Selection;
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, PADDING};
-use crate::stores::{Buffer, BufferEvent, DiffLine, EditorState, EditorStore, OpenBufferError};
+use crate::stores::{Buffer, BufferEvent, DiffLine, DiffLineTag, EditorState, EditorStore, OpenBufferError};
 use crate::types::{EditorTabConfig, SelectionPhase, Tab, TabConfig};
 use gpui::prelude::*;
 use gpui::*;
@@ -20,7 +20,24 @@ pub(crate) struct DiffModeData {
     pub(crate) expanded_sections: Vec<(usize, usize)>,
     pub(crate) max_old_line_num: usize,
     pub(crate) max_new_line_num: usize,
+    /// Optional buffer-line mapping for external diffs (PR review).
+    /// When None, buffer_line defaults to new_line_num - 1.
+    pub(crate) buffer_line_map: Option<Vec<Option<usize>>>,
+    /// Display line indices that have comments (for gutter markers)
+    pub(crate) comment_line_indices: Vec<usize>,
 }
+
+#[derive(Clone, Debug)]
+pub enum EditorViewEvent {
+    DiffLineClicked {
+        display_line_index: usize,
+        old_line_num: Option<usize>,
+        new_line_num: Option<usize>,
+        tag: DiffLineTag,
+    },
+}
+
+impl EventEmitter<EditorViewEvent> for EditorView {}
 
 #[derive(Default)]
 pub struct EditorViewOptions {
@@ -106,7 +123,7 @@ impl EditorView {
                 .max()
                 .unwrap_or(0);
 
-            let display_lines = compute_display_lines(&diff_lines, &[], DIFF_CONTEXT_LINES);
+            let display_lines = compute_display_lines(&diff_lines, &[], DIFF_CONTEXT_LINES, None);
 
             Self {
                 buffer: Some(buffer),
@@ -130,6 +147,8 @@ impl EditorView {
                     expanded_sections: Vec::new(),
                     max_old_line_num: max_old,
                     max_new_line_num: max_new,
+                    buffer_line_map: None,
+                    comment_line_indices: Vec::new(),
                 }),
                 _blink_task: None,
                 _buffer_subscription: None,
@@ -193,20 +212,84 @@ impl EditorView {
         }
     }
 
+    /// Create an editor in read-only diff mode from externally provided content and diff data.
+    /// Used for PR review diffs where we have patch text rather than file-backed buffers.
+    pub fn new_external_diff(
+        buffer: Entity<Buffer>,
+        diff_lines: Vec<DiffLine>,
+        buffer_line_map: Vec<Option<usize>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let max_old = diff_lines
+            .iter()
+            .filter_map(|l| l.old_line_num)
+            .max()
+            .unwrap_or(0);
+        let max_new = diff_lines
+            .iter()
+            .filter_map(|l| l.new_line_num)
+            .max()
+            .unwrap_or(0);
+
+        let display_lines = compute_display_lines(
+            &diff_lines,
+            &[],
+            DIFF_CONTEXT_LINES,
+            Some(&buffer_line_map),
+        );
+
+        Self {
+            buffer: Some(buffer),
+            buffer_error: None,
+            file_path: PathBuf::new(),
+            cursor_line: 0,
+            cursor_col: 0,
+            scroll_offset: 0,
+            scroll_x: 0.0,
+            scroll_accumulator: 0.0,
+            focus_handle: cx.focus_handle(),
+            last_bounds: None,
+            last_line_number_width: 0.0,
+            cursor_visible: false,
+            last_cursor_move: std::time::Instant::now(),
+            selection: None,
+            selection_phase: SelectionPhase::None,
+            diff_mode: Some(DiffModeData {
+                all_lines: diff_lines,
+                display_lines,
+                expanded_sections: Vec::new(),
+                max_old_line_num: max_old,
+                max_new_line_num: max_new,
+                buffer_line_map: Some(buffer_line_map),
+                comment_line_indices: Vec::new(),
+            }),
+            _blink_task: None,
+            _buffer_subscription: None,
+        }
+    }
+
     /// Expand a collapsed section in diff mode
     pub fn expand_diff_section(&mut self, start_idx: usize, end_idx: usize) {
         if let Some(ref mut diff_data) = self.diff_mode {
             diff_data.expanded_sections.push((start_idx, end_idx));
+            let map = diff_data.buffer_line_map.as_deref();
             diff_data.display_lines = compute_display_lines(
                 &diff_data.all_lines,
                 &diff_data.expanded_sections,
                 DIFF_CONTEXT_LINES,
+                map,
             );
         }
     }
 
     pub fn is_diff_mode(&self) -> bool {
         self.diff_mode.is_some()
+    }
+
+    pub fn set_comment_lines(&mut self, indices: Vec<usize>) {
+        if let Some(ref mut diff_data) = self.diff_mode {
+            diff_data.comment_line_indices = indices;
+        }
     }
 
     pub(crate) fn ensure_cursor_valid(&mut self, cx: &mut Context<Self>) {
@@ -457,7 +540,7 @@ impl Render for EditorView {
                     // In diff mode, use display_lines count
                     let max_len = diff_data.display_lines.iter().map(|dl| {
                         match dl {
-                            DiffDisplayLine::Line(line) => line.content.len(),
+                            DiffDisplayLine::Line { line, .. } => line.content.len(),
                             DiffDisplayLine::Collapsed { count, .. } => format!("··· {} lines ···", count).len(),
                         }
                     }).max().unwrap_or(0);
@@ -518,13 +601,21 @@ impl Render for EditorView {
                 let Some(bounds) = this.last_bounds else { return };
                 let (line, _col) = this.pixel_to_line_col(event.position, bounds, cx);
 
-                // In diff mode, check if clicking on a collapsed section but don't take focus
                 if let Some(ref diff_data) = this.diff_mode {
                     if let Some(display_line) = diff_data.display_lines.get(line) {
-                        if let DiffDisplayLine::Collapsed { start_idx, end_idx, .. } = display_line {
-                            // Expand this section
-                            this.expand_diff_section(*start_idx, *end_idx);
-                            cx.notify();
+                        match display_line {
+                            DiffDisplayLine::Collapsed { start_idx, end_idx, .. } => {
+                                this.expand_diff_section(*start_idx, *end_idx);
+                                cx.notify();
+                            }
+                            DiffDisplayLine::Line { line: diff_line, .. } => {
+                                cx.emit(EditorViewEvent::DiffLineClicked {
+                                    display_line_index: line,
+                                    old_line_num: diff_line.old_line_num,
+                                    new_line_num: diff_line.new_line_num,
+                                    tag: diff_line.tag,
+                                });
+                            }
                         }
                     }
                     return;

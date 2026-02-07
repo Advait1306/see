@@ -29,6 +29,7 @@ actions!(
         ToggleWorkspaceSidebar, // Left sidebar (workspaces)
         ToggleFileTree,         // Right sidebar (file system)
         ToggleDiffList,         // Right sidebar (git diff)
+        TogglePrList,           // Right sidebar (pull requests)
         Quit,
     ]
 );
@@ -37,6 +38,12 @@ actions!(
 actions!(
     august,
     [PrevDiff, NextDiff,]
+);
+
+// PR review commands
+actions!(
+    august,
+    [PrReviewPrevFile, PrReviewNextFile,]
 );
 
 /// Register all application keybindings
@@ -55,11 +62,15 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-b", ToggleWorkspaceSidebar, None), // Left sidebar
         KeyBinding::new("cmd-l", ToggleFileTree, None),         // Right sidebar (files)
         KeyBinding::new("cmd-g", ToggleDiffList, None),         // Right sidebar (git)
+        KeyBinding::new("cmd-shift-g", TogglePrList, None),    // Right sidebar (PRs)
         // Tab key handling (only when Terminal has focus)
         KeyBinding::new("tab", SendTabToTerminal, Some("Terminal")),
         KeyBinding::new("shift-tab", SendShiftTabToTerminal, Some("Terminal")),
         // Diff carousel navigation
         KeyBinding::new("j", PrevDiff, Some("DiffCarousel")),
         KeyBinding::new("k", NextDiff, Some("DiffCarousel")),
+        // PR review file navigation
+        KeyBinding::new("j", PrReviewNextFile, Some("PrReview")),
+        KeyBinding::new("k", PrReviewPrevFile, Some("PrReview")),
     ]);
 }

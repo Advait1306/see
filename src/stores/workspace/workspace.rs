@@ -1,4 +1,5 @@
 use super::super::git::GitStore;
+use super::super::github_store::GitHubStore;
 use super::super::{FileTreeStore, FileTreeStoreEvent, PaneStore, PaneStoreEvent};
 use crate::ui::pane_group::PaneGroupView;
 use gpui::*;
@@ -19,6 +20,7 @@ pub struct Workspace {
     pub path: PathBuf,
     file_tree_store: Entity<FileTreeStore>,
     git_store: Option<Entity<GitStore>>,
+    github_store: Option<Entity<GitHubStore>>,
     pane_store: Entity<PaneStore>,
     pane_group_view: Entity<PaneGroupView>,
     _subscriptions: Vec<Subscription>,
@@ -29,6 +31,17 @@ impl Workspace {
         let file_tree_store = cx.new(|cx| FileTreeStore::new(id.clone(), path.clone(), cx));
         let git_store = if let Some(store) = GitStore::try_new(&path) {
             Some(cx.new(|cx| store.with_polling(cx)))
+        } else {
+            None
+        };
+
+        let github_store = if let Some(git) = &git_store {
+            let remote = git.read(cx).github_remote();
+            if let Some((owner, repo)) = remote {
+                Some(cx.new(|cx| GitHubStore::new(owner, repo, cx)))
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -67,6 +80,7 @@ impl Workspace {
             path,
             file_tree_store,
             git_store,
+            github_store,
             pane_store,
             pane_group_view,
             _subscriptions: subscriptions,
@@ -79,6 +93,10 @@ impl Workspace {
 
     pub fn git_store(&self) -> Option<&Entity<GitStore>> {
         self.git_store.as_ref()
+    }
+
+    pub fn github_store(&self) -> Option<&Entity<GitHubStore>> {
+        self.github_store.as_ref()
     }
 
     pub fn pane_store(&self) -> &Entity<PaneStore> {

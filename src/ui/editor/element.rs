@@ -85,6 +85,7 @@ pub(crate) struct EditorLayoutState {
     pub(crate) diff_old_num_width: f32,
     pub(crate) diff_new_num_width: f32,
     pub(crate) highlights: Vec<HighlightSpan>, // Syntax highlights for visible lines
+    pub(crate) comment_markers: Vec<usize>, // Screen-relative line indices with comment markers
 }
 
 impl IntoElement for EditorElement {
@@ -150,6 +151,21 @@ impl Element for EditorElement {
             let total_lines = display_lines.len();
             let buffer = self.buffer.read(cx);
 
+            // Compute comment markers for visible lines
+            let comment_line_indices = self.view.read(cx).diff_mode.as_ref()
+                .map(|d| &d.comment_line_indices)
+                .cloned()
+                .unwrap_or_default();
+            let comment_markers: Vec<usize> = comment_line_indices.iter()
+                .filter_map(|&idx| {
+                    if idx >= self.scroll_offset && idx < self.scroll_offset + visible_line_count {
+                        Some(idx - self.scroll_offset)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             // Collect visible lines and track which buffer lines need highlighting
             let mut diff_visible_lines = Vec::new();
             let mut min_buffer_line: Option<usize> = None;
@@ -159,14 +175,11 @@ impl Element for EditorElement {
                 let line_idx = self.scroll_offset + i;
                 if line_idx < total_lines {
                     match &display_lines[line_idx] {
-                        DiffDisplayLine::Line(line) => {
-                            // For Insert and Equal lines, we have a new_line_num that maps to the buffer
-                            let byte_offset = if let Some(new_num) = line.new_line_num {
-                                let line_idx = new_num.saturating_sub(1); // new_line_num is 1-indexed
-                                // Track range for highlight fetching
-                                min_buffer_line = Some(min_buffer_line.map_or(line_idx, |m| m.min(line_idx)));
-                                max_buffer_line = Some(max_buffer_line.map_or(line_idx, |m| m.max(line_idx)));
-                                Some(buffer.line_to_byte(line_idx))
+                        DiffDisplayLine::Line { line, buffer_line } => {
+                            let byte_offset = if let Some(buf_line) = buffer_line {
+                                min_buffer_line = Some(min_buffer_line.map_or(*buf_line, |m: usize| m.min(*buf_line)));
+                                max_buffer_line = Some(max_buffer_line.map_or(*buf_line, |m: usize| m.max(*buf_line)));
+                                Some(buffer.line_to_byte(*buf_line))
                             } else {
                                 None
                             };
@@ -219,6 +232,7 @@ impl Element for EditorElement {
                 diff_old_num_width,
                 diff_new_num_width,
                 highlights,
+                comment_markers,
             };
         }
 
@@ -326,6 +340,7 @@ impl Element for EditorElement {
             diff_old_num_width: 0.0,
             diff_new_num_width: 0.0,
             highlights,
+            comment_markers: Vec::new(),
         }
     }
 
@@ -587,6 +602,29 @@ impl EditorElement {
             },
         };
         window.paint_quad(fill(gutter_bounds, sidebar_color));
+
+        // Paint comment markers in the gutter
+        let info_color = cx.theme().info;
+        for &screen_line in &layout.comment_markers {
+            let y = origin.y + px(PADDING + (screen_line as f32 * CELL_HEIGHT));
+            let dot_size: f32 = 4.0;
+            let dot_y = y + px((CELL_HEIGHT - dot_size) / 2.0);
+            let dot_bounds = Bounds {
+                origin: gpui::point(origin.x + px(PADDING / 2.0 - dot_size / 2.0), dot_y),
+                size: Size {
+                    width: px(dot_size),
+                    height: px(dot_size),
+                },
+            };
+            window.paint_quad(PaintQuad {
+                bounds: dot_bounds,
+                corner_radii: Corners::all(px(dot_size / 2.0)),
+                background: info_color.into(),
+                border_widths: Edges::default(),
+                border_color: gpui::transparent_black(),
+                border_style: BorderStyle::default(),
+            });
+        }
 
         // Calculate old/new line number column positions
         let old_num_x = PADDING;

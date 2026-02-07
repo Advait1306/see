@@ -269,6 +269,10 @@ impl PaneStore {
                                 });
                                 pane.tabs.push(TabItem::Editor(editor));
                             }
+                            TabConfig::PrReview(_) => {
+                                // PR review tabs require a GitHubStore and are not
+                                // restored from layout — they're opened via the PR list
+                            }
                         }
                     }
 

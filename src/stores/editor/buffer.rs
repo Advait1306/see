@@ -95,6 +95,36 @@ pub struct Buffer {
 impl EventEmitter<BufferEvent> for Buffer {}
 
 impl Buffer {
+    /// Create an in-memory buffer from content string (no file, no git, no polling).
+    /// Used for PR review diffs where we only have patch text, not actual files.
+    pub fn from_content(content: String, filename: &str, cx: &mut Context<Self>) -> Self {
+        let rope = Rope::from_str(&content);
+        let file_path = PathBuf::from(filename);
+
+        let mut buffer = Self {
+            rope,
+            file_path: file_path.clone(),
+            saved_mtime: None,
+            is_dirty: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            line_diffs: Vec::new(),
+            diff_lines: Vec::new(),
+            repository: None,
+            head_oid: None,
+            language: None,
+            syntax_tree: None,
+            parser: None,
+        };
+
+        let registry = LanguageRegistry::global(cx);
+        if let Some(lang) = registry.read(cx).language_for_path(&file_path) {
+            buffer.set_language(lang);
+        }
+
+        buffer
+    }
+
     pub fn load(path: PathBuf, cx: &mut Context<Self>) -> io::Result<Self> {
         let file = fs::File::open(&path)?;
         let mtime = file.metadata()?.modified().ok();

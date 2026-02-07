@@ -5,6 +5,7 @@ pub mod commands;
 pub mod config;
 pub mod constants;
 pub mod file_watcher;
+pub mod github;
 pub mod stores;
 pub mod syntax;
 pub mod terminal;

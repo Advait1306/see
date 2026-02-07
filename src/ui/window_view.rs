@@ -4,6 +4,7 @@ use crate::stores::{PaneStore, RightSidebarPanel, WindowStore, Workspace};
 use crate::ui::diff_list::DiffList;
 use crate::ui::file_tree::FileTree;
 use crate::ui::pane_group::PaneGroupView;
+use crate::ui::pr_list::PrList;
 use crate::ui::workspace_sidebar::WorkspaceSidebar;
 use gpui::prelude::*;
 use gpui::*;
@@ -15,6 +16,7 @@ pub struct WindowView {
     workspace_sidebar: Entity<WorkspaceSidebar>,
     file_tree: Entity<FileTree>,
     diff_list: Entity<DiffList>,
+    pr_list: Entity<PrList>,
     focus_handle: FocusHandle,
 }
 
@@ -28,12 +30,14 @@ impl WindowView {
             cx.new(|cx| WorkspaceSidebar::new(window_store.clone(), cx));
         let file_tree = cx.new(|cx| FileTree::new(window_store.clone(), cx));
         let diff_list = cx.new(|cx| DiffList::new(window_store.clone(), cx));
+        let pr_list = cx.new(|cx| PrList::new(window_store.clone(), cx));
 
         Self {
             window_store,
             workspace_sidebar,
             file_tree,
             diff_list,
+            pr_list,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -72,6 +76,12 @@ impl WindowView {
         });
     }
 
+    pub fn toggle_pr_list(&mut self, cx: &mut Context<Self>) {
+        self.window_store.update(cx, |store, cx| {
+            store.toggle_pr_list(cx);
+        });
+    }
+
     pub fn toggle_workspace_sidebar(&mut self, cx: &mut Context<Self>) {
         self.window_store.update(cx, |store, cx| {
             store.toggle_sidebar(cx);
@@ -89,14 +99,13 @@ impl WindowView {
     fn render_right_sidebar(&self, panel: RightSidebarPanel, sidebar_collapsed: bool, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
-        // Width percentages based on ratios:
-        // With sidebar:    DiffList (2:5:5), FileTree (1:4:1)
-        // Without sidebar: DiffList (0:5:5), FileTree (0:5:1)
         let width_pct = match (panel, sidebar_collapsed) {
-            (RightSidebarPanel::DiffList, false) => 42.0,  // 5/12 ≈ 42%
-            (RightSidebarPanel::DiffList, true) => 50.0,   // 5/10 = 50%
-            (RightSidebarPanel::FileTree, false) => 17.0,  // 1/6 ≈ 17%
-            (RightSidebarPanel::FileTree, true) => 17.0,   // 1/6 ≈ 17%
+            (RightSidebarPanel::DiffList, false) => 42.0,
+            (RightSidebarPanel::DiffList, true) => 50.0,
+            (RightSidebarPanel::FileTree, false) => 17.0,
+            (RightSidebarPanel::FileTree, true) => 17.0,
+            (RightSidebarPanel::PrList, false) => 25.0,
+            (RightSidebarPanel::PrList, true) => 25.0,
             (RightSidebarPanel::Hidden, _) => 0.0,
         };
 
@@ -112,6 +121,7 @@ impl WindowView {
             .map(|el| match panel {
                 RightSidebarPanel::FileTree => el.child(self.file_tree.clone()),
                 RightSidebarPanel::DiffList => el.child(self.diff_list.clone()),
+                RightSidebarPanel::PrList => el.child(self.pr_list.clone()),
                 RightSidebarPanel::Hidden => el,
             })
     }
@@ -181,6 +191,11 @@ impl Render for WindowView {
         } else {
             theme.muted_foreground
         };
+        let pr_list_icon_color = if right_sidebar == RightSidebarPanel::PrList {
+            theme.foreground
+        } else {
+            theme.muted_foreground
+        };
 
         div()
             .id("app-view")
@@ -230,6 +245,14 @@ impl Render for WindowView {
                     this.focus_active_content(window, cx);
                 }
             }))
+            .on_action(cx.listener(|this, _: &TogglePrList, window, cx| {
+                this.toggle_pr_list(cx);
+                if this.right_sidebar(cx) == RightSidebarPanel::PrList {
+                    this.pr_list.read(cx).focus_handle(cx).focus(window);
+                } else {
+                    this.focus_active_content(window, cx);
+                }
+            }))
             .size_full()
             .flex()
             .flex_col()
@@ -258,11 +281,29 @@ impl Render for WindowView {
                     )
                     .child(
                         div()
-                            .w(px(100.0))
+                            .w(px(130.0))
                             .flex()
                             .justify_end()
                             .gap(px(4.0))
                             .pr(px(12.0))
+                            .child(
+                                div()
+                                    .id("pr-list-toggle")
+                                    .debug_selector(|| "pr-list-toggle".into())
+                                    .p(px(6.0))
+                                    .rounded(px(4.0))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme.border))
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.toggle_pr_list(cx);
+                                    }))
+                                    .child(
+                                        Icon::default()
+                                            .path("icons/git-pull-request.svg")
+                                            .small()
+                                            .text_color(pr_list_icon_color),
+                                    ),
+                            )
                             .child(
                                 div()
                                     .id("diff-list-toggle")
@@ -307,12 +348,14 @@ impl Render for WindowView {
                 // With sidebar:    DiffList (2:5:5), FileTree (1:4:1), Hidden (1:5:0)
                 // Without sidebar: DiffList (0:5:5), FileTree (0:5:1), Hidden (0:6:0)
                 let (sidebar_pct, main_pct) = match (right_sidebar, sidebar_collapsed) {
-                    (RightSidebarPanel::DiffList, false) => (17.0, 41.0),   // 2:5:5 → 2/12, 5/12
-                    (RightSidebarPanel::DiffList, true) => (0.0, 50.0),     // 0:5:5 → 5/10
-                    (RightSidebarPanel::FileTree, false) => (17.0, 66.0),   // 1:4:1 → 1/6, 4/6
-                    (RightSidebarPanel::FileTree, true) => (0.0, 83.0),     // 0:5:1 → 5/6
-                    (RightSidebarPanel::Hidden, false) => (17.0, 83.0),     // 1:5:0 → 1/6, 5/6
-                    (RightSidebarPanel::Hidden, true) => (0.0, 100.0),      // 0:6:0 → 6/6
+                    (RightSidebarPanel::DiffList, false) => (17.0, 41.0),
+                    (RightSidebarPanel::DiffList, true) => (0.0, 50.0),
+                    (RightSidebarPanel::FileTree, false) => (17.0, 66.0),
+                    (RightSidebarPanel::FileTree, true) => (0.0, 83.0),
+                    (RightSidebarPanel::PrList, false) => (17.0, 58.0),
+                    (RightSidebarPanel::PrList, true) => (0.0, 75.0),
+                    (RightSidebarPanel::Hidden, false) => (17.0, 83.0),
+                    (RightSidebarPanel::Hidden, true) => (0.0, 100.0),
                 };
 
                 div()

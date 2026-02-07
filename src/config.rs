@@ -49,6 +49,10 @@ impl Drop for ConfigDirGuard {
     }
 }
 
+pub fn github_token_path() -> PathBuf {
+    config_dir().join("github-token.json")
+}
+
 pub fn workspaces_path() -> PathBuf {
     config_dir().join("workspaces.json")
 }

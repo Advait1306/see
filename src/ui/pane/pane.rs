@@ -144,7 +144,8 @@ impl Pane {
                         terminal_idx += 1;
                         format!("Terminal {}", terminal_idx)
                     }
-                    TabItem::Editor(editor) => editor.read(cx).label(cx)
+                    TabItem::Editor(editor) => editor.read(cx).label(cx),
+                    TabItem::PrReview(pr) => pr.read(cx).label(cx),
                 };
 
                 div()
@@ -336,6 +337,7 @@ impl Render for Pane {
                     .map(|el| match active_tab {
                         Some(TabItem::Terminal(terminal)) => el.child(terminal),
                         Some(TabItem::Editor(editor)) => el.child(editor),
+                        Some(TabItem::PrReview(pr_review)) => el.child(pr_review),
                         None => el,
                     })
                     .child(self.render_drop_zones(cx)),

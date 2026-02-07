@@ -14,12 +14,16 @@ pub struct EditorTabConfig {
     pub path: PathBuf,
 }
 
+pub use crate::ui::pr_review::PrReviewTabConfig;
+
 /// Serializable state for a single tab (tagged union for JSON)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum TabConfig {
     Terminal(TerminalTabConfig),
     Editor(EditorTabConfig),
+    #[serde(rename = "pr_review")]
+    PrReview(PrReviewTabConfig),
 }
 
 /// Trait for tab-like views that can be serialized/deserialized

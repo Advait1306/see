@@ -10,7 +10,13 @@ use crate::stores::{DiffLine, DiffLineTag};
 /// What's actually displayed - either a real diff line or a collapsed indicator
 #[derive(Debug, Clone)]
 pub enum DiffDisplayLine {
-    Line(DiffLine),
+    Line {
+        line: DiffLine,
+        /// Index into the buffer for syntax highlighting lookups.
+        /// For file-backed diffs this is `new_line_num - 1`;
+        /// for external diffs (PR review) it's a sequential index into the content buffer.
+        buffer_line: Option<usize>,
+    },
     Collapsed {
         start_idx: usize,
         end_idx: usize,
@@ -18,15 +24,28 @@ pub enum DiffDisplayLine {
     },
 }
 
-/// Computes which lines to display given the full diff and expanded sections
+/// Computes which lines to display given the full diff and expanded sections.
+///
+/// `buffer_line_map` provides the buffer line index for each diff line (for syntax highlighting).
+/// When `None`, defaults to `new_line_num.map(|n| n - 1)` (file-backed diffs).
+/// When `Some`, uses the provided mapping (for external/PR diffs with sequential indices).
 pub fn compute_display_lines(
     all_lines: &[DiffLine],
     expanded_sections: &[(usize, usize)],
     context_lines: usize,
+    buffer_line_map: Option<&[Option<usize>]>,
 ) -> Vec<DiffDisplayLine> {
     if all_lines.is_empty() {
         return Vec::new();
     }
+
+    let buf_line = |idx: usize| -> Option<usize> {
+        if let Some(map) = buffer_line_map {
+            map.get(idx).copied().flatten()
+        } else {
+            all_lines[idx].new_line_num.map(|n| n - 1)
+        }
+    };
 
     // Find indices of all changed lines
     let changed_indices: Vec<usize> = all_lines
@@ -41,8 +60,8 @@ pub fn compute_display_lines(
         if is_section_expanded(0, all_lines.len(), expanded_sections) {
             return all_lines
                 .iter()
-                .cloned()
-                .map(DiffDisplayLine::Line)
+                .enumerate()
+                .map(|(i, l)| DiffDisplayLine::Line { line: l.clone(), buffer_line: buf_line(i) })
                 .collect();
         }
         return vec![DiffDisplayLine::Collapsed {
@@ -79,7 +98,7 @@ pub fn compute_display_lines(
 
             if is_expanded {
                 for i in collapsed_start..collapsed_end {
-                    display_items.push(DiffDisplayLine::Line(all_lines[i].clone()));
+                    display_items.push(DiffDisplayLine::Line { line: all_lines[i].clone(), buffer_line: buf_line(i) });
                 }
             } else {
                 display_items.push(DiffDisplayLine::Collapsed {
@@ -91,7 +110,7 @@ pub fn compute_display_lines(
         }
 
         for i in start..end {
-            display_items.push(DiffDisplayLine::Line(all_lines[i].clone()));
+            display_items.push(DiffDisplayLine::Line { line: all_lines[i].clone(), buffer_line: buf_line(i) });
         }
 
         current_pos = end;
@@ -104,7 +123,7 @@ pub fn compute_display_lines(
 
         if is_expanded {
             for i in collapsed_start..collapsed_end {
-                display_items.push(DiffDisplayLine::Line(all_lines[i].clone()));
+                display_items.push(DiffDisplayLine::Line { line: all_lines[i].clone(), buffer_line: buf_line(i) });
             }
         } else {
             display_items.push(DiffDisplayLine::Collapsed {

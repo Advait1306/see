@@ -122,4 +122,9 @@ impl GitStore {
         &self.changed_files
     }
 
+    pub fn github_remote(&self) -> Option<(String, String)> {
+        let remote = self.repository.find_remote("origin").ok()?;
+        let url = remote.url()?;
+        crate::github::parse_github_remote(url)
+    }
 }
