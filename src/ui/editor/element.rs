@@ -72,6 +72,11 @@ pub(crate) enum DiffVisibleLine {
     Collapsed {
         count: usize,
     },
+    CommentRow {
+        text: String,
+        is_first_line: bool,
+        is_pending: bool,
+    },
 }
 
 pub(crate) struct EditorLayoutState {
@@ -194,6 +199,13 @@ impl Element for EditorElement {
                         }
                         DiffDisplayLine::Collapsed { count, .. } => {
                             diff_visible_lines.push(DiffVisibleLine::Collapsed { count: *count });
+                        }
+                        DiffDisplayLine::CommentRow { text, is_first_line, is_pending } => {
+                            diff_visible_lines.push(DiffVisibleLine::CommentRow {
+                                text: text.clone(),
+                                is_first_line: *is_first_line,
+                                is_pending: *is_pending,
+                            });
                         }
                     }
                 }
@@ -817,6 +829,83 @@ impl EditorElement {
                         window,
                         cx,
                     );
+                }
+                DiffVisibleLine::CommentRow { text, is_first_line, is_pending } => {
+                    let bg_alpha = if *is_pending { 0.08 } else { 0.05 };
+                    let comment_bg = Hsla {
+                        h: info_color.h,
+                        s: info_color.s,
+                        l: info_color.l,
+                        a: bg_alpha,
+                    };
+
+                    // Tinted background
+                    let line_bounds = Bounds {
+                        origin: gpui::point(origin.x, y),
+                        size: Size {
+                            width: bounds.size.width,
+                            height: px(CELL_HEIGHT),
+                        },
+                    };
+                    window.paint_quad(fill(line_bounds, comment_bg));
+
+                    // 2px left accent bar
+                    let accent_bounds = Bounds {
+                        origin: gpui::point(origin.x + px(gutter_width), y),
+                        size: Size {
+                            width: px(2.0),
+                            height: px(CELL_HEIGHT),
+                        },
+                    };
+                    window.paint_quad(fill(accent_bounds, info_color));
+
+                    // Text content
+                    if !text.is_empty() {
+                        let text_color = if *is_first_line {
+                            muted_foreground_color
+                        } else {
+                            foreground_color
+                        };
+                        let font_weight = if *is_first_line {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::NORMAL
+                        };
+                        let comment_font = Font {
+                            weight: font_weight,
+                            ..font.clone()
+                        };
+                        let text_run = TextRun {
+                            len: text.len(),
+                            font: comment_font,
+                            color: text_color,
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        };
+
+                        let content_area_bounds = Bounds {
+                            origin: origin + gpui::point(px(content_x), Pixels::ZERO),
+                            size: Size {
+                                width: bounds.size.width - px(content_x),
+                                height: bounds.size.height,
+                            },
+                        };
+                        window.with_content_mask(Some(ContentMask { bounds: content_area_bounds }), |window| {
+                            let shaped = window.text_system().shape_line(
+                                text.clone().into(),
+                                font_size,
+                                &[text_run],
+                                None,
+                            );
+                            let _ = shaped.paint(
+                                gpui::point(origin.x + px(content_x), y),
+                                px(CELL_HEIGHT),
+                                window,
+                                cx,
+                            );
+                        });
+                    }
                 }
             }
         }

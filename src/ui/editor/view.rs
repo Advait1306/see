@@ -1,6 +1,6 @@
 //! Editor view - main view struct and rendering
 
-use super::diff_mode::{compute_display_lines, DiffDisplayLine};
+use super::diff_mode::{compute_display_lines, inject_inline_comments, CommentAttachment, DiffDisplayLine};
 use super::element::EditorElement;
 use super::input::handle_key;
 use super::selection::Selection;
@@ -25,6 +25,8 @@ pub(crate) struct DiffModeData {
     pub(crate) buffer_line_map: Option<Vec<Option<usize>>>,
     /// Display line indices that have comments (for gutter markers)
     pub(crate) comment_line_indices: Vec<usize>,
+    /// Inline comment attachments to inject into display lines
+    pub(crate) inline_comments: Vec<CommentAttachment>,
 }
 
 #[derive(Clone, Debug)]
@@ -149,6 +151,7 @@ impl EditorView {
                     max_new_line_num: max_new,
                     buffer_line_map: None,
                     comment_line_indices: Vec::new(),
+                    inline_comments: Vec::new(),
                 }),
                 _blink_task: None,
                 _buffer_subscription: None,
@@ -262,6 +265,7 @@ impl EditorView {
                 max_new_line_num: max_new,
                 buffer_line_map: Some(buffer_line_map),
                 comment_line_indices: Vec::new(),
+                inline_comments: Vec::new(),
             }),
             _blink_task: None,
             _buffer_subscription: None,
@@ -272,14 +276,8 @@ impl EditorView {
     pub fn expand_diff_section(&mut self, start_idx: usize, end_idx: usize) {
         if let Some(ref mut diff_data) = self.diff_mode {
             diff_data.expanded_sections.push((start_idx, end_idx));
-            let map = diff_data.buffer_line_map.as_deref();
-            diff_data.display_lines = compute_display_lines(
-                &diff_data.all_lines,
-                &diff_data.expanded_sections,
-                DIFF_CONTEXT_LINES,
-                map,
-            );
         }
+        self.recompute_display_lines_with_comments();
     }
 
     pub fn is_diff_mode(&self) -> bool {
@@ -289,6 +287,26 @@ impl EditorView {
     pub fn set_comment_lines(&mut self, indices: Vec<usize>) {
         if let Some(ref mut diff_data) = self.diff_mode {
             diff_data.comment_line_indices = indices;
+        }
+    }
+
+    pub fn set_inline_comments(&mut self, attachments: Vec<CommentAttachment>) {
+        if let Some(ref mut diff_data) = self.diff_mode {
+            diff_data.inline_comments = attachments;
+        }
+        self.recompute_display_lines_with_comments();
+    }
+
+    fn recompute_display_lines_with_comments(&mut self) {
+        if let Some(ref mut diff_data) = self.diff_mode {
+            let map = diff_data.buffer_line_map.as_deref();
+            diff_data.display_lines = compute_display_lines(
+                &diff_data.all_lines,
+                &diff_data.expanded_sections,
+                DIFF_CONTEXT_LINES,
+                map,
+            );
+            inject_inline_comments(&mut diff_data.display_lines, &diff_data.inline_comments);
         }
     }
 
@@ -542,6 +560,7 @@ impl Render for EditorView {
                         match dl {
                             DiffDisplayLine::Line { line, .. } => line.content.len(),
                             DiffDisplayLine::Collapsed { count, .. } => format!("··· {} lines ···", count).len(),
+                            DiffDisplayLine::CommentRow { text, .. } => text.len(),
                         }
                     }).max().unwrap_or(0);
                     (diff_data.display_lines.len(), max_len)
@@ -616,6 +635,7 @@ impl Render for EditorView {
                                     tag: diff_line.tag,
                                 });
                             }
+                            DiffDisplayLine::CommentRow { .. } => {}
                         }
                     }
                     return;

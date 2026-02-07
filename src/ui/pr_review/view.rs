@@ -8,7 +8,7 @@ use crate::commands::{PrReviewNextFile, PrReviewPrevFile};
 use crate::github::{CreateReviewComment, CreateReviewRequest, PullRequestFile, ReviewComment};
 use crate::stores::{Buffer, DiffLineTag, GitHubStore, GitHubStoreEvent};
 use crate::types::{Tab, TabConfig};
-use crate::ui::editor::{DiffDisplayLine, EditorView, EditorViewEvent};
+use crate::ui::editor::{CommentAttachment, DiffDisplayLine, EditorView, EditorViewEvent, InlineComment};
 
 use super::file_diff;
 
@@ -70,6 +70,7 @@ impl PrReviewView {
                         this.rebuild_diff_editor(cx);
                     }
                     this.update_comment_markers(cx);
+                    this.update_inline_comments(cx);
                     cx.notify();
                 }
                 _ => {
@@ -170,6 +171,7 @@ impl PrReviewView {
         self.diff_editor = Some(editor);
         self._editor_subscription = Some(sub);
         self.update_comment_markers(cx);
+        self.update_inline_comments(cx);
     }
 
     pub fn next_file(&mut self, cx: &mut Context<Self>) {
@@ -306,6 +308,7 @@ impl PrReviewView {
 
         self.close_comment_panel(cx);
         self.update_comment_markers(cx);
+        self.update_inline_comments(cx);
         cx.notify();
     }
 
@@ -359,6 +362,73 @@ impl PrReviewView {
 
         editor.update(cx, |view, _cx| {
             view.set_comment_lines(marker_indices);
+        });
+    }
+
+    fn update_inline_comments(&mut self, cx: &mut Context<Self>) {
+        let editor = match &self.diff_editor {
+            Some(e) => e.clone(),
+            None => return,
+        };
+
+        let path = match self.selected_filename(cx) {
+            Some(p) => p,
+            None => return,
+        };
+
+        // Collect comments grouped by (line, side)
+        let mut grouped: std::collections::HashMap<(u64, String), Vec<InlineComment>> =
+            std::collections::HashMap::new();
+
+        // Existing GitHub comments
+        let store = self.github_store.read(cx);
+        if let Some(details) = store.pr_details(self.pr_number) {
+            for comment in &details.comments {
+                if comment.path != path {
+                    continue;
+                }
+                if let Some(line) = comment.line {
+                    let side = comment.side.as_deref().unwrap_or("RIGHT").to_string();
+                    grouped
+                        .entry((line, side))
+                        .or_default()
+                        .push(InlineComment {
+                            author: comment.user.login.clone(),
+                            body: comment.body.clone(),
+                            created_at: comment.created_at.clone(),
+                            is_pending: false,
+                        });
+                }
+            }
+        }
+
+        // Pending draft comments
+        for pc in &self.pending_comments {
+            if pc.anchor.path != path {
+                continue;
+            }
+            grouped
+                .entry((pc.anchor.line, pc.anchor.side.clone()))
+                .or_default()
+                .push(InlineComment {
+                    author: "You".to_string(),
+                    body: pc.body.clone(),
+                    created_at: String::new(),
+                    is_pending: true,
+                });
+        }
+
+        let attachments: Vec<CommentAttachment> = grouped
+            .into_iter()
+            .map(|((line, side), comments)| CommentAttachment {
+                line,
+                side,
+                comments,
+            })
+            .collect();
+
+        editor.update(cx, |view, _cx| {
+            view.set_inline_comments(attachments);
         });
     }
 

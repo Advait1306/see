@@ -22,6 +22,26 @@ pub enum DiffDisplayLine {
         end_idx: usize,
         count: usize,
     },
+    CommentRow {
+        text: String,
+        is_first_line: bool,
+        is_pending: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct InlineComment {
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+    pub is_pending: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommentAttachment {
+    pub line: u64,
+    pub side: String,
+    pub comments: Vec<InlineComment>,
 }
 
 /// Computes which lines to display given the full diff and expanded sections.
@@ -139,4 +159,109 @@ pub fn compute_display_lines(
 
 fn is_section_expanded(start: usize, end: usize, expanded_sections: &[(usize, usize)]) -> bool {
     expanded_sections.iter().any(|(s, e)| *s == start && *e == end)
+}
+
+#[cfg(test)]
+fn make_diff_line(tag: DiffLineTag, old: Option<usize>, new: Option<usize>, content: &str) -> DiffLine {
+    DiffLine {
+        tag,
+        old_line_num: old,
+        new_line_num: new,
+        content: content.to_string(),
+    }
+}
+
+/// Injects CommentRow entries into display_lines after lines that have comments attached.
+/// Matches by (line_number, side) from the original diff, not by display index.
+pub fn inject_inline_comments(
+    display_lines: &mut Vec<DiffDisplayLine>,
+    attachments: &[CommentAttachment],
+) {
+    if attachments.is_empty() {
+        return;
+    }
+
+    // Process attachments in reverse display order to avoid index shifting
+    // First, find insertion points for each attachment
+    let mut insertions: Vec<(usize, Vec<DiffDisplayLine>)> = Vec::new();
+
+    for attachment in attachments {
+        // Find the display line that matches this attachment's (line, side)
+        let insert_after = display_lines.iter().enumerate().rev().find_map(|(idx, dl)| {
+            if let DiffDisplayLine::Line { line, .. } = dl {
+                let matches = if attachment.side == "LEFT" {
+                    line.old_line_num == Some(attachment.line as usize)
+                        && line.tag == DiffLineTag::Delete
+                } else {
+                    line.new_line_num == Some(attachment.line as usize)
+                        && line.tag != DiffLineTag::Delete
+                };
+                if matches { Some(idx) } else { None }
+            } else {
+                None
+            }
+        });
+
+        let Some(insert_idx) = insert_after else { continue };
+
+        let mut rows = Vec::new();
+        for comment in &attachment.comments {
+            let timestamp = if comment.created_at.len() >= 10 {
+                &comment.created_at[..10]
+            } else {
+                &comment.created_at
+            };
+            let author_label = if comment.is_pending {
+                "You (draft)".to_string()
+            } else {
+                format!("@{} ({})", comment.author, timestamp)
+            };
+
+            // Header row
+            rows.push(DiffDisplayLine::CommentRow {
+                text: author_label.clone(),
+                is_first_line: true,
+                is_pending: comment.is_pending,
+            });
+
+            // Body rows — one per line
+            for body_line in comment.body.lines() {
+                rows.push(DiffDisplayLine::CommentRow {
+                    text: format!("  {}", body_line),
+                    is_first_line: false,
+                    is_pending: comment.is_pending,
+                });
+            }
+            // Handle empty body
+            if comment.body.is_empty() {
+                rows.push(DiffDisplayLine::CommentRow {
+                    text: String::new(),
+                    is_first_line: false,
+                    is_pending: comment.is_pending,
+                });
+            }
+        }
+
+        insertions.push((insert_idx, rows));
+    }
+
+    // Sort by insertion index descending so we can insert without shifting earlier indices
+    insertions.sort_by(|a, b| b.0.cmp(&a.0));
+
+    // Deduplicate: if multiple attachments target the same line, merge them
+    insertions.dedup_by(|a, b| {
+        if a.0 == b.0 {
+            b.1.append(&mut a.1);
+            true
+        } else {
+            false
+        }
+    });
+
+    for (idx, rows) in insertions {
+        let insert_pos = idx + 1;
+        for (i, row) in rows.into_iter().enumerate() {
+            display_lines.insert(insert_pos + i, row);
+        }
+    }
 }
