@@ -1,6 +1,6 @@
 use crate::config;
 use crate::file_watcher::FileWatcher;
-use gpui::*;
+use gpui::{Context, EventEmitter};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -167,5 +167,121 @@ impl FileTreeStore {
         }
 
         entries
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::prelude::*;
+
+    #[test]
+    fn test_file_tree_scans_directory() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            fixture.create_tree(&[
+                ("file_a.txt", "a"),
+                ("file_b.txt", "b"),
+                ("subdir/nested.txt", "nested"),
+            ]);
+
+            let ws_path = fixture.workspace_path();
+            let store = cx.new(|cx| FileTreeStore::new("test".to_string(), ws_path, cx));
+
+            cx.read(|cx| {
+                let entries = store.read(cx).entries();
+                // Should have subdir and two files at top level
+                let top_level_names: Vec<&str> = entries
+                    .iter()
+                    .filter(|e| e.depth == 0)
+                    .map(|e| e.name.as_str())
+                    .collect();
+                assert!(top_level_names.contains(&"subdir"));
+                assert!(top_level_names.contains(&"file_a.txt"));
+                assert!(top_level_names.contains(&"file_b.txt"));
+            });
+        });
+    }
+
+    #[test]
+    fn test_file_tree_toggle_expanded() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            fixture.create_tree(&[
+                ("subdir/nested.txt", "content"),
+            ]);
+
+            let ws_path = fixture.workspace_path();
+            let subdir_path = ws_path.join("subdir");
+            let store = cx.new(|cx| FileTreeStore::new("test".to_string(), ws_path, cx));
+
+            // Initially subdir is not expanded, so no children visible
+            cx.read(|cx| {
+                let entries = store.read(cx).entries();
+                let nested = entries.iter().find(|e| e.name == "nested.txt");
+                assert!(nested.is_none(), "Nested file should not be visible when subdir is collapsed");
+            });
+
+            // Expand subdir
+            store.update(cx, |store, cx| {
+                store.toggle_expanded(&subdir_path, cx);
+            });
+
+            cx.read(|cx| {
+                let entries = store.read(cx).entries();
+                let nested = entries.iter().find(|e| e.name == "nested.txt");
+                assert!(nested.is_some(), "Nested file should be visible after expanding subdir");
+            });
+        });
+    }
+
+    #[test]
+    fn test_file_tree_sorts_dirs_before_files() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            fixture.create_tree(&[
+                ("zebra.txt", "z"),
+                ("alpha_dir/file.txt", "content"),
+            ]);
+
+            let ws_path = fixture.workspace_path();
+            let store = cx.new(|cx| FileTreeStore::new("test".to_string(), ws_path, cx));
+
+            cx.read(|cx| {
+                let entries = store.read(cx).entries();
+                let top_level: Vec<(&str, bool)> = entries
+                    .iter()
+                    .filter(|e| e.depth == 0)
+                    .map(|e| (e.name.as_str(), e.is_dir))
+                    .collect();
+                // Directories should come before files
+                if top_level.len() >= 2 {
+                    assert!(top_level[0].1, "First entry should be a directory");
+                    assert!(!top_level[1].1, "Second entry should be a file");
+                }
+            });
+        });
+    }
+
+    #[test]
+    fn test_file_tree_saves_expanded_state() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            fixture.create_tree(&[
+                ("subdir/file.txt", "content"),
+            ]);
+
+            let ws_path = fixture.workspace_path();
+            let subdir_path = ws_path.join("subdir");
+            let store = cx.new(|cx| FileTreeStore::new("test-ws".to_string(), ws_path, cx));
+
+            store.update(cx, |store, cx| {
+                store.toggle_expanded(&subdir_path, cx);
+            });
+
+            // Verify the config file was written
+            let config_path = crate::config::workspace_file_tree_path("test-ws");
+            assert!(config_path.exists(), "Config file should have been written");
+        });
     }
 }

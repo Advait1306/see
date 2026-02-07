@@ -646,3 +646,379 @@ impl Tab for EditorView {
         TabConfig::Editor(EditorTabConfig { path: self.file_path.clone() })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::input::handle_key;
+
+    fn simulate_key(view: &mut EditorView, key: &str, cx: &mut Context<EditorView>) {
+        let event = KeyDownEvent {
+            keystroke: Keystroke::parse(key).unwrap(),
+            is_held: false,
+        };
+        handle_key(view, &event, cx);
+    }
+
+    fn simulate_char(view: &mut EditorView, ch: &str, cx: &mut Context<EditorView>) {
+        let event = KeyDownEvent {
+            keystroke: Keystroke::parse(ch).unwrap().with_simulated_ime(),
+            is_held: false,
+        };
+        handle_key(view, &event, cx);
+    }
+
+    #[core::prelude::v1::test]
+    fn test_editor_cursor_movement() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "hello\nworld");
+
+            let editor = cx.new(|cx| EditorView::new(path, Default::default(), cx));
+
+            // Verify cursor starts at (0, 0)
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 0);
+                assert_eq!(view.cursor_col, 0);
+            });
+
+            // Press right 3 times -> (0, 3)
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "right", cx);
+                simulate_key(view, "right", cx);
+                simulate_key(view, "right", cx);
+            });
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 0);
+                assert_eq!(view.cursor_col, 3);
+            });
+
+            // Press down -> (1, 3)
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "down", cx);
+            });
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 1);
+                assert_eq!(view.cursor_col, 3);
+            });
+
+            // Press left -> (1, 2)
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "left", cx);
+            });
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 1);
+                assert_eq!(view.cursor_col, 2);
+            });
+
+            // Press up -> (0, 2)
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "up", cx);
+            });
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 0);
+                assert_eq!(view.cursor_col, 2);
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_editor_type_text() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "");
+
+            let editor = cx.new(|cx| EditorView::new(path, Default::default(), cx));
+
+            // Type "hi"
+            editor.update(cx, |view, cx| {
+                simulate_char(view, "h", cx);
+                simulate_char(view, "i", cx);
+            });
+
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                let buf = view.buffer.as_ref().unwrap().read(cx);
+                assert_eq!(buf.line(0).unwrap().as_str(), "hi");
+                assert_eq!(view.cursor_line, 0);
+                assert_eq!(view.cursor_col, 2);
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_editor_backspace() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "abc");
+
+            let editor = cx.new(|cx| EditorView::new(path, Default::default(), cx));
+
+            // Move right 3 times to position cursor at (0, 3)
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "right", cx);
+                simulate_key(view, "right", cx);
+                simulate_key(view, "right", cx);
+            });
+
+            // Press backspace
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "backspace", cx);
+            });
+
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                let buf = view.buffer.as_ref().unwrap().read(cx);
+                assert_eq!(buf.line(0).unwrap().as_str(), "ab");
+                assert_eq!(view.cursor_line, 0);
+                assert_eq!(view.cursor_col, 2);
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_editor_enter_creates_newline() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "ab");
+
+            let editor = cx.new(|cx| EditorView::new(path, Default::default(), cx));
+
+            // Move right 2 times
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "right", cx);
+                simulate_key(view, "right", cx);
+            });
+
+            // Press enter
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "enter", cx);
+            });
+
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                let buf = view.buffer.as_ref().unwrap().read(cx);
+                assert_eq!(buf.line(0).unwrap().as_str(), "ab\n");
+                assert!(buf.line(1).is_some());
+                assert_eq!(view.cursor_line, 1);
+                assert_eq!(view.cursor_col, 0);
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_editor_undo_via_key() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "x");
+
+            let editor = cx.new(|cx| EditorView::new(path, Default::default(), cx));
+
+            // Move right 1, type "y"
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "right", cx);
+                simulate_char(view, "y", cx);
+            });
+
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                let buf = view.buffer.as_ref().unwrap().read(cx);
+                assert_eq!(buf.line(0).unwrap().as_str(), "xy");
+            });
+
+            // Undo via cmd-z
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "cmd-z", cx);
+            });
+
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                let buf = view.buffer.as_ref().unwrap().read(cx);
+                assert_eq!(buf.line(0).unwrap().as_str(), "x");
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_editor_redo_via_key() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "x");
+
+            let editor = cx.new(|cx| EditorView::new(path, Default::default(), cx));
+
+            // Move right 1, type "y"
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "right", cx);
+                simulate_char(view, "y", cx);
+            });
+
+            // Undo via cmd-z
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "cmd-z", cx);
+            });
+
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                let buf = view.buffer.as_ref().unwrap().read(cx);
+                assert_eq!(buf.line(0).unwrap().as_str(), "x");
+            });
+
+            // Redo via cmd-shift-z
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "cmd-shift-z", cx);
+            });
+
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                let buf = view.buffer.as_ref().unwrap().read(cx);
+                assert_eq!(buf.line(0).unwrap().as_str(), "xy");
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_editor_save_via_key() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "old");
+
+            let editor = cx.new(|cx| EditorView::new(path.clone(), Default::default(), cx));
+
+            // Move to end, type " new"
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "end", cx);
+                simulate_char(view, " ", cx);
+                simulate_char(view, "n", cx);
+                simulate_char(view, "e", cx);
+                simulate_char(view, "w", cx);
+            });
+
+            // Save via cmd-s
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "cmd-s", cx);
+            });
+
+            let saved_content = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(saved_content, "old new");
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_editor_home_end_keys() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "hello");
+
+            let editor = cx.new(|cx| EditorView::new(path, Default::default(), cx));
+
+            // Press end -> cursor at (0, 5)
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "end", cx);
+            });
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 0);
+                assert_eq!(view.cursor_col, 5);
+            });
+
+            // Press home -> cursor at (0, 0)
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "home", cx);
+            });
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 0);
+                assert_eq!(view.cursor_col, 0);
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_editor_word_navigation() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "hello world");
+
+            let editor = cx.new(|cx| EditorView::new(path, Default::default(), cx));
+
+            // Press alt-right -> should jump past "hello" to start of "world" (0, 6)
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "alt-right", cx);
+            });
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 0);
+                assert_eq!(view.cursor_col, 6);
+            });
+
+            // Press alt-right -> should jump to end of " world" -> (0, 6) or further
+            let col_after_second_alt_right = {
+                editor.update(cx, |view, cx| {
+                    simulate_key(view, "alt-right", cx);
+                });
+                cx.read(|cx| {
+                    let view = editor.read(cx);
+                    assert_eq!(view.cursor_line, 0);
+                    view.cursor_col
+                })
+            };
+
+            // Press alt-left -> should jump back
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "alt-left", cx);
+            });
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 0);
+                assert!(view.cursor_col < col_after_second_alt_right);
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_editor_cursor_wraps_at_line_boundary() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "ab\ncd");
+
+            let editor = cx.new(|cx| EditorView::new(path, Default::default(), cx));
+
+            // Press right 2 times -> (0, 2)
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "right", cx);
+                simulate_key(view, "right", cx);
+            });
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 0);
+                assert_eq!(view.cursor_col, 2);
+            });
+
+            // Press right -> should wrap to (1, 0)
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "right", cx);
+            });
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 1);
+                assert_eq!(view.cursor_col, 0);
+            });
+
+            // Press left -> should wrap back to (0, 2)
+            editor.update(cx, |view, cx| {
+                simulate_key(view, "left", cx);
+            });
+            cx.read(|cx| {
+                let view = editor.read(cx);
+                assert_eq!(view.cursor_line, 0);
+                assert_eq!(view.cursor_col, 2);
+            });
+        });
+    }
+}

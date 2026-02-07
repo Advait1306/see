@@ -366,3 +366,142 @@ impl Focusable for WindowView {
         self.focus_handle.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    fn init_test_stores(cx: &mut TestAppContext) -> crate::test_helpers::TestFixture {
+        let fixture = crate::test_helpers::TestFixture::new(cx);
+        cx.update(|cx| {
+            crate::stores::TerminalStore::init(cx);
+            crate::stores::WorkspaceStore::init(cx);
+
+            let workspace_store = crate::stores::WorkspaceStore::global(cx);
+            workspace_store.update(cx, |store, cx| {
+                store.add_workspace(
+                    "Test".to_string(),
+                    fixture.workspace_path(),
+                    cx,
+                );
+            });
+        });
+        fixture
+    }
+
+    #[core::prelude::v1::test]
+    fn test_toggle_file_tree() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = init_test_stores(cx);
+
+            let window_store = cx.new(|cx| WindowStore::new(cx));
+
+            // Initially hidden
+            cx.read(|cx| {
+                assert_eq!(window_store.read(cx).right_sidebar(), RightSidebarPanel::Hidden);
+            });
+
+            // Toggle on
+            window_store.update(cx, |store, cx| {
+                store.toggle_file_tree(cx);
+            });
+
+            cx.read(|cx| {
+                assert_eq!(window_store.read(cx).right_sidebar(), RightSidebarPanel::FileTree);
+            });
+
+            // Toggle off
+            window_store.update(cx, |store, cx| {
+                store.toggle_file_tree(cx);
+            });
+
+            cx.read(|cx| {
+                assert_eq!(window_store.read(cx).right_sidebar(), RightSidebarPanel::Hidden);
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_toggle_diff_list() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = init_test_stores(cx);
+
+            let window_store = cx.new(|cx| WindowStore::new(cx));
+
+            window_store.update(cx, |store, cx| {
+                store.toggle_diff_list(cx);
+            });
+
+            cx.read(|cx| {
+                assert_eq!(window_store.read(cx).right_sidebar(), RightSidebarPanel::DiffList);
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_toggle_workspace_sidebar() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = init_test_stores(cx);
+
+            let window_store = cx.new(|cx| WindowStore::new(cx));
+
+            // Initially not collapsed
+            cx.read(|cx| {
+                assert!(!window_store.read(cx).sidebar_collapsed());
+            });
+
+            window_store.update(cx, |store, cx| {
+                store.toggle_sidebar(cx);
+            });
+
+            cx.read(|cx| {
+                assert!(window_store.read(cx).sidebar_collapsed());
+            });
+
+            window_store.update(cx, |store, cx| {
+                store.toggle_sidebar(cx);
+            });
+
+            cx.read(|cx| {
+                assert!(!window_store.read(cx).sidebar_collapsed());
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_file_tree_and_diff_list_exclusive() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = init_test_stores(cx);
+
+            let window_store = cx.new(|cx| WindowStore::new(cx));
+
+            // Open file tree
+            window_store.update(cx, |store, cx| {
+                store.toggle_file_tree(cx);
+            });
+
+            cx.read(|cx| {
+                assert_eq!(window_store.read(cx).right_sidebar(), RightSidebarPanel::FileTree);
+            });
+
+            // Open diff list should replace file tree
+            window_store.update(cx, |store, cx| {
+                store.toggle_diff_list(cx);
+            });
+
+            cx.read(|cx| {
+                assert_eq!(window_store.read(cx).right_sidebar(), RightSidebarPanel::DiffList);
+            });
+
+            // Open file tree should replace diff list
+            window_store.update(cx, |store, cx| {
+                store.toggle_file_tree(cx);
+            });
+
+            cx.read(|cx| {
+                assert_eq!(window_store.read(cx).right_sidebar(), RightSidebarPanel::FileTree);
+            });
+        });
+    }
+}

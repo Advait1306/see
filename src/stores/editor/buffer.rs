@@ -1,8 +1,7 @@
 use super::super::git::{compute_hunks, compute_line_diffs, LineDiff};
 use crate::syntax::{highlights_for_lines, HighlightSpan, Language, LanguageRegistry};
 use git2::{Oid, Repository};
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{Context, EventEmitter};
 use ropey::Rope;
 use similar::{ChangeTag, TextDiff};
 use std::fs;
@@ -554,5 +553,260 @@ impl Buffer {
         let tree = self.syntax_tree.as_ref()?;
         let lang = self.language.as_ref()?;
         Some(highlights_for_lines(tree, &lang.highlights_query, &self.rope, start_line, end_line))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::prelude::*;
+
+    fn make_buffer_from_text(text: &str) -> Buffer {
+        Buffer {
+            rope: Rope::from_str(text),
+            file_path: PathBuf::from("test.txt"),
+            saved_mtime: None,
+            is_dirty: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            line_diffs: Vec::new(),
+            diff_lines: Vec::new(),
+            repository: None,
+            head_oid: None,
+            language: None,
+            syntax_tree: None,
+            parser: None,
+        }
+    }
+
+    #[core::prelude::v1::test]
+    fn test_line_col_to_offset_basic() {
+        let buf = make_buffer_from_text("hello\nworld\n");
+        assert_eq!(buf.line_col_to_offset(0, 0), 0);
+        assert_eq!(buf.line_col_to_offset(0, 3), 3);
+        assert_eq!(buf.line_col_to_offset(1, 0), 6);
+        assert_eq!(buf.line_col_to_offset(1, 2), 8);
+    }
+
+    #[core::prelude::v1::test]
+    fn test_line_col_to_offset_clamped() {
+        let buf = make_buffer_from_text("hi\nbye\n");
+        // Col beyond line length should clamp
+        assert_eq!(buf.line_col_to_offset(0, 100), 2);
+        // Line beyond buffer should return end
+        assert_eq!(buf.line_col_to_offset(99, 0), buf.total_chars());
+    }
+
+    #[core::prelude::v1::test]
+    fn test_offset_to_line_col_roundtrip() {
+        let buf = make_buffer_from_text("abc\ndef\nghi\n");
+        for offset in 0..buf.total_chars() {
+            let (line, col) = buf.offset_to_line_col(offset);
+            let back = buf.line_col_to_offset(line, col);
+            assert_eq!(back, offset, "Roundtrip failed for offset {}", offset);
+        }
+    }
+
+    #[core::prelude::v1::test]
+    fn test_line_len() {
+        let buf = make_buffer_from_text("hello\nhi\n\n");
+        assert_eq!(buf.line_len(0), 5);
+        assert_eq!(buf.line_len(1), 2);
+        assert_eq!(buf.line_len(2), 0); // empty line before trailing newline
+    }
+
+    #[core::prelude::v1::test]
+    fn test_line_count() {
+        let buf = make_buffer_from_text("a\nb\nc\n");
+        assert_eq!(buf.line_count(), 4); // ropey counts trailing empty line
+    }
+
+    #[core::prelude::v1::test]
+    fn test_char_at() {
+        let buf = make_buffer_from_text("abc");
+        assert_eq!(buf.char_at(0), Some('a'));
+        assert_eq!(buf.char_at(2), Some('c'));
+        assert_eq!(buf.char_at(3), None);
+    }
+
+    #[core::prelude::v1::test]
+    fn test_total_chars() {
+        let buf = make_buffer_from_text("hello");
+        assert_eq!(buf.total_chars(), 5);
+    }
+
+    #[core::prelude::v1::test]
+    fn test_max_line_len() {
+        let buf = make_buffer_from_text("short\nlonger line\nhi\n");
+        assert_eq!(buf.max_line_len(), 11); // "longer line"
+    }
+
+    #[core::prelude::v1::test]
+    fn test_file_name() {
+        let mut buf = make_buffer_from_text("");
+        assert_eq!(buf.file_name(), "test.txt");
+        buf.file_path = PathBuf::from("/some/path/main.rs");
+        assert_eq!(buf.file_name(), "main.rs");
+    }
+
+    #[test]
+    fn test_buffer_load_from_file() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("hello.txt", "line one\nline two\nline three\n");
+
+            let buffer = cx.new(|cx| Buffer::load(path, cx).unwrap());
+
+            cx.read(|cx| {
+                let buf = buffer.read(cx);
+                assert_eq!(buf.line_count(), 4); // ropey trailing empty line
+                assert_eq!(buf.line(0), Some("line one\n".to_string()));
+                assert!(!buf.is_dirty());
+            });
+        });
+    }
+
+    #[test]
+    fn test_buffer_insert_with_state() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "hello");
+
+            let buffer = cx.new(|cx| Buffer::load(path, cx).unwrap());
+
+            buffer.update(cx, |buf, cx| {
+                buf.insert_with_state(5, " world", EditorState::new((0, 5)), cx);
+            });
+
+            cx.read(|cx| {
+                let buf = buffer.read(cx);
+                assert_eq!(buf.line(0), Some("hello world".to_string()));
+                assert!(buf.is_dirty());
+            });
+        });
+    }
+
+    #[test]
+    fn test_buffer_delete_with_state() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "hello world");
+
+            let buffer = cx.new(|cx| Buffer::load(path, cx).unwrap());
+
+            buffer.update(cx, |buf, cx| {
+                buf.delete_with_state(5, 11, EditorState::new((0, 5)), cx);
+            });
+
+            cx.read(|cx| {
+                let buf = buffer.read(cx);
+                assert_eq!(buf.line(0), Some("hello".to_string()));
+                assert!(buf.is_dirty());
+            });
+        });
+    }
+
+    #[test]
+    fn test_buffer_undo() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "original");
+
+            let buffer = cx.new(|cx| Buffer::load(path, cx).unwrap());
+
+            buffer.update(cx, |buf, cx| {
+                buf.insert_with_state(8, " added", EditorState::new((0, 8)), cx);
+            });
+
+            cx.read(|cx| {
+                assert_eq!(buffer.read(cx).line(0), Some("original added".to_string()));
+            });
+
+            buffer.update(cx, |buf, cx| {
+                let state = buf.undo(cx);
+                assert!(state.is_some());
+            });
+
+            cx.read(|cx| {
+                assert_eq!(buffer.read(cx).line(0), Some("original".to_string()));
+            });
+        });
+    }
+
+    #[test]
+    fn test_buffer_redo() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "original");
+
+            let buffer = cx.new(|cx| Buffer::load(path, cx).unwrap());
+
+            buffer.update(cx, |buf, cx| {
+                buf.insert_with_state(8, " added", EditorState::new((0, 8)), cx);
+            });
+
+            buffer.update(cx, |buf, cx| {
+                buf.undo(cx);
+            });
+
+            buffer.update(cx, |buf, cx| {
+                let state = buf.redo(cx);
+                assert!(state.is_some());
+            });
+
+            cx.read(|cx| {
+                assert_eq!(buffer.read(cx).line(0), Some("original added".to_string()));
+            });
+        });
+    }
+
+    #[test]
+    fn test_buffer_undo_redo_clears_redo_on_new_edit() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "abc");
+
+            let buffer = cx.new(|cx| Buffer::load(path, cx).unwrap());
+
+            buffer.update(cx, |buf, cx| {
+                buf.insert_with_state(3, "d", EditorState::new((0, 3)), cx);
+            });
+
+            buffer.update(cx, |buf, cx| {
+                buf.undo(cx);
+            });
+
+            // New edit should clear redo stack
+            buffer.update(cx, |buf, cx| {
+                buf.insert_with_state(3, "x", EditorState::new((0, 3)), cx);
+            });
+
+            buffer.update(cx, |buf, cx| {
+                let state = buf.redo(cx);
+                assert!(state.is_none(), "Redo should be empty after new edit");
+            });
+        });
+    }
+
+    #[test]
+    fn test_buffer_save() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "before");
+
+            let buffer = cx.new(|cx| Buffer::load(path.clone(), cx).unwrap());
+
+            buffer.update(cx, |buf, cx| {
+                buf.insert_with_state(6, " after", EditorState::new((0, 6)), cx);
+                buf.save(cx).unwrap();
+            });
+
+            cx.read(|cx| {
+                assert!(!buffer.read(cx).is_dirty());
+            });
+
+            let saved_content = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(saved_content, "before after");
+        });
     }
 }

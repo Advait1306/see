@@ -1,6 +1,6 @@
 use super::buffer::Buffer;
 use gpui::prelude::*;
-use gpui::*;
+use gpui::{App, Context, Entity, EventEmitter, Global};
 use ropey::Rope;
 use std::collections::HashMap;
 use std::io::BufReader;
@@ -72,5 +72,63 @@ impl EditorStore {
 
         cx.emit(EditorStoreEvent::BufferOpened);
         Ok(buffer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_editor_store_open_buffer() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("hello.rs", "fn main() {}\n");
+
+            let store = cx.new(|_cx| EditorStore::new());
+
+            let result = store.update(cx, |store, cx| store.open_buffer(path, cx));
+            assert!(result.is_ok());
+
+            let buffer = result.unwrap();
+            cx.read(|cx| {
+                assert_eq!(buffer.read(cx).line_count(), 2);
+            });
+        });
+    }
+
+    #[test]
+    fn test_editor_store_caches_buffers() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let path = fixture.create_file("test.txt", "content");
+
+            let store = cx.new(|_cx| EditorStore::new());
+
+            let buffer1 = store
+                .update(cx, |store, cx| store.open_buffer(path.clone(), cx))
+                .unwrap();
+            let buffer2 = store
+                .update(cx, |store, cx| store.open_buffer(path, cx))
+                .unwrap();
+
+            // Same entity should be returned for the same path
+            assert_eq!(buffer1.entity_id(), buffer2.entity_id());
+        });
+    }
+
+    #[test]
+    fn test_editor_store_open_nonexistent_file() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = crate::test_helpers::TestFixture::new(cx);
+
+            let store = cx.new(|_cx| EditorStore::new());
+
+            let result = store.update(cx, |store, cx| {
+                store.open_buffer(PathBuf::from("/nonexistent/path/file.txt"), cx)
+            });
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), OpenBufferError::NotFound));
+        });
     }
 }

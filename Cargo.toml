@@ -10,6 +10,10 @@ edition = "2024"
 name = "august"
 path = "src/main.rs"
 
+[lib]
+name = "august"
+path = "src/lib.rs"
+
 [package.metadata.bundle]
 name = "August"
 identifier = "com.august.app"
@@ -57,3 +61,7 @@ tree-sitter-toml-ng = "0.7"
 tree-sitter-typescript = "0.23"
 tree-sitter-yaml = "0.7"
 uuid = { version = "1.19.0", features = ["v4"] }
+
+[dev-dependencies]
+gpui = { version = "0.2.2", features = ["test-support"] }
+tempfile = "3"

@@ -252,3 +252,42 @@ impl Default for LanguageRegistry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[core::prelude::v1::test]
+    fn test_language_for_path_rust() {
+        let registry = LanguageRegistry::new();
+        let lang = registry.language_for_path(Path::new("main.rs"));
+        assert!(lang.is_some());
+        assert_eq!(lang.unwrap().name, "rust");
+    }
+
+    #[core::prelude::v1::test]
+    fn test_language_for_path_unknown_extension() {
+        let registry = LanguageRegistry::new();
+        let lang = registry.language_for_path(Path::new("file.xyz"));
+        assert!(lang.is_none());
+    }
+
+    #[core::prelude::v1::test]
+    fn test_language_for_path_no_extension() {
+        let registry = LanguageRegistry::new();
+        let lang = registry.language_for_path(Path::new("Makefile"));
+        assert!(lang.is_none());
+    }
+
+    #[core::prelude::v1::test]
+    fn test_all_builtin_languages_register() {
+        let registry = LanguageRegistry::new();
+        let expected_extensions = ["rs", "js", "ts", "tsx", "py", "go", "c", "cpp", "java", "rb", "swift", "json", "toml", "yml", "html", "css", "sh"];
+        for ext in &expected_extensions {
+            let path_str = format!("test.{}", ext);
+            let lang = registry.language_for_path(Path::new(&path_str));
+            assert!(lang.is_some(), "Expected language for extension '{}' but got None", ext);
+        }
+    }
+}

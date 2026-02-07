@@ -1,22 +1,12 @@
-mod assets;
-mod commands;
-mod config;
-mod constants;
-mod file_watcher;
-mod stores;
-mod syntax;
-mod terminal;
-mod types;
-mod ui;
-
-use assets::Assets;
-use commands::Quit;
+use august::assets::Assets;
+use august::commands::{self, Quit};
+use august::config;
+use august::stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
+use august::syntax::LanguageRegistry;
+use august::ui::WindowView;
 use gpui::*;
 use gpui_component::Root;
 use std::borrow::Cow;
-use stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
-use syntax::LanguageRegistry;
-use ui::WindowView;
 
 fn main() {
     env_logger::init();
