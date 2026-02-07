@@ -102,6 +102,7 @@ impl WindowView {
 
         div()
             .id("right-sidebar")
+            .debug_selector(|| "right-sidebar".into())
             .w(relative(width_pct / 100.0))
             .h_full()
             .flex_shrink_0()
@@ -238,6 +239,7 @@ impl Render for WindowView {
             .child(
                 div()
                     .id("title-bar")
+                    .debug_selector(|| "title-bar".into())
                     .h(px(TITLE_BAR_HEIGHT))
                     .w_full()
                     .flex()
@@ -264,6 +266,7 @@ impl Render for WindowView {
                             .child(
                                 div()
                                     .id("diff-list-toggle")
+                                    .debug_selector(|| "diff-list-toggle".into())
                                     .p(px(6.0))
                                     .rounded(px(4.0))
                                     .cursor_pointer()
@@ -281,6 +284,7 @@ impl Render for WindowView {
                             .child(
                                 div()
                                     .id("file-tree-toggle")
+                                    .debug_selector(|| "file-tree-toggle".into())
                                     .p(px(6.0))
                                     .rounded(px(4.0))
                                     .cursor_pointer()
@@ -322,6 +326,7 @@ impl Render for WindowView {
                         el.child(
                             div()
                                 .id("workspace-sidebar-container")
+                                .debug_selector(|| "workspace-sidebar-container".into())
                                 .w(relative(sidebar_pct / 100.0))
                                 .h_full()
                                 .flex_shrink_0()
@@ -331,6 +336,7 @@ impl Render for WindowView {
                     .child(
                         div()
                             .id("main-content")
+                            .debug_selector(|| "main-content".into())
                             .w(relative(main_pct / 100.0))
                             .h_full()
                             .flex_shrink_0()
@@ -375,6 +381,7 @@ mod tests {
     fn init_test_stores(cx: &mut TestAppContext) -> crate::test_helpers::TestFixture {
         let fixture = crate::test_helpers::TestFixture::new(cx);
         cx.update(|cx| {
+            gpui_component::init(cx);
             crate::stores::TerminalStore::init(cx);
             crate::stores::WorkspaceStore::init(cx);
 
@@ -466,6 +473,154 @@ mod tests {
             cx.read(|cx| {
                 assert!(!window_store.read(cx).sidebar_collapsed());
             });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_title_bar_renders() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = init_test_stores(cx);
+            let window_store = cx.new(|cx| WindowStore::new(cx));
+
+            let (_view, cx) = cx.add_window_view(|window, cx| {
+                WindowView::new(window_store.clone(), window, cx)
+            });
+
+            assert!(cx.debug_bounds("title-bar").is_some(), "title-bar should be rendered");
+            assert!(cx.debug_bounds("diff-list-toggle").is_some(), "diff-list-toggle should be rendered");
+            assert!(cx.debug_bounds("file-tree-toggle").is_some(), "file-tree-toggle should be rendered");
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_sidebar_toggle_renders() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = init_test_stores(cx);
+            let window_store = cx.new(|cx| WindowStore::new(cx));
+
+            let (view, cx) = cx.add_window_view(|window, cx| {
+                WindowView::new(window_store.clone(), window, cx)
+            });
+
+            assert!(
+                cx.debug_bounds("workspace-sidebar-container").is_some(),
+                "sidebar should be visible initially"
+            );
+
+            view.update_in(cx, |view, _window, cx| {
+                view.toggle_workspace_sidebar(cx);
+            });
+
+            assert!(
+                cx.debug_bounds("workspace-sidebar-container").is_none(),
+                "sidebar should be hidden after toggle"
+            );
+
+            view.update_in(cx, |view, _window, cx| {
+                view.toggle_workspace_sidebar(cx);
+            });
+
+            assert!(
+                cx.debug_bounds("workspace-sidebar-container").is_some(),
+                "sidebar should reappear after second toggle"
+            );
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_right_sidebar_file_tree_renders() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = init_test_stores(cx);
+            let window_store = cx.new(|cx| WindowStore::new(cx));
+
+            let (view, cx) = cx.add_window_view(|window, cx| {
+                WindowView::new(window_store.clone(), window, cx)
+            });
+
+            assert!(
+                cx.debug_bounds("right-sidebar").is_none(),
+                "right sidebar should be hidden initially"
+            );
+
+            view.update_in(cx, |view, _window, cx| {
+                view.toggle_file_tree(cx);
+            });
+
+            assert!(
+                cx.debug_bounds("right-sidebar").is_some(),
+                "right sidebar should appear with file tree"
+            );
+            assert!(
+                cx.debug_bounds("file-tree").is_some(),
+                "file tree should be rendered inside right sidebar"
+            );
+
+            view.update_in(cx, |view, _window, cx| {
+                view.toggle_file_tree(cx);
+            });
+
+            assert!(
+                cx.debug_bounds("right-sidebar").is_none(),
+                "right sidebar should disappear after toggle off"
+            );
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_right_sidebar_diff_list_renders() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = init_test_stores(cx);
+            let window_store = cx.new(|cx| WindowStore::new(cx));
+
+            let (view, cx) = cx.add_window_view(|window, cx| {
+                WindowView::new(window_store.clone(), window, cx)
+            });
+
+            assert!(
+                cx.debug_bounds("right-sidebar").is_none(),
+                "right sidebar should be hidden initially"
+            );
+
+            view.update_in(cx, |view, _window, cx| {
+                view.toggle_diff_list(cx);
+            });
+
+            assert!(
+                cx.debug_bounds("right-sidebar").is_some(),
+                "right sidebar should appear with diff list"
+            );
+            assert!(
+                cx.debug_bounds("diff-carousel").is_some(),
+                "diff carousel should be rendered inside right sidebar"
+            );
+
+            view.update_in(cx, |view, _window, cx| {
+                view.toggle_diff_list(cx);
+            });
+
+            assert!(
+                cx.debug_bounds("right-sidebar").is_none(),
+                "right sidebar should disappear after toggle off"
+            );
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_layout_structure() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = init_test_stores(cx);
+            let window_store = cx.new(|cx| WindowStore::new(cx));
+
+            let (_view, cx) = cx.add_window_view(|window, cx| {
+                WindowView::new(window_store.clone(), window, cx)
+            });
+
+            assert!(cx.debug_bounds("title-bar").is_some(), "title-bar should be present");
+            assert!(cx.debug_bounds("main-content").is_some(), "main-content should be present");
+            assert!(
+                cx.debug_bounds("workspace-sidebar-container").is_some(),
+                "workspace sidebar should be present"
+            );
         });
     }
 

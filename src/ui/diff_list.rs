@@ -218,6 +218,7 @@ impl Render for DiffList {
 
         div()
             .id("diff-carousel")
+            .debug_selector(|| "diff-carousel".into())
             .key_context("DiffCarousel")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &PrevDiff, window, cx| {

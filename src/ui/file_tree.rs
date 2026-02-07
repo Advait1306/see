@@ -261,6 +261,7 @@ impl Render for FileTree {
 
         div()
             .id("file-tree")
+            .debug_selector(|| "file-tree".into())
             .track_focus(&self.focus_handle)
             .size_full()
             .flex()
