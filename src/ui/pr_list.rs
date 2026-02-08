@@ -512,6 +512,7 @@ impl Render for PrList {
                 div()
                     .h(px(32.0))
                     .w_full()
+                    .flex_shrink_0()
                     .flex()
                     .items_center()
                     .px_3()
@@ -525,7 +526,14 @@ impl Render for PrList {
                             .child("PULL REQUESTS"),
                     ),
             )
-            .child(content)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_hidden()
+                    .child(content),
+            )
     }
 }
 
