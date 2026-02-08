@@ -85,7 +85,7 @@ pub struct DeviceCodeResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccessTokenResponse {
+pub struct TokenResponse {
     #[serde(default)]
     pub access_token: String,
     #[serde(default)]
@@ -94,11 +94,19 @@ pub struct AccessTokenResponse {
     pub scope: String,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub expires_in: Option<u64>,
+    #[serde(default)]
+    pub refresh_token_expires_in: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredToken {
     pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -263,13 +271,52 @@ mod tests {
     }
 
     #[core::prelude::v1::test]
-    fn test_access_token_response_defaults() {
-        // Minimal JSON — all fields should get defaults
+    fn test_token_response_defaults() {
         let json = r#"{}"#;
-        let resp: AccessTokenResponse = serde_json::from_str(json).unwrap();
+        let resp: TokenResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.access_token, "");
         assert_eq!(resp.token_type, "");
         assert_eq!(resp.scope, "");
         assert_eq!(resp.error, None);
+        assert_eq!(resp.refresh_token, None);
+        assert_eq!(resp.expires_in, None);
+        assert_eq!(resp.refresh_token_expires_in, None);
+    }
+
+    #[core::prelude::v1::test]
+    fn test_token_response_with_refresh_token() {
+        let json = r#"{
+            "access_token": "ghu_abc123",
+            "token_type": "bearer",
+            "scope": "",
+            "refresh_token": "ghr_xyz789",
+            "expires_in": 28800,
+            "refresh_token_expires_in": 15811200
+        }"#;
+        let resp: TokenResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.access_token, "ghu_abc123");
+        assert_eq!(resp.refresh_token.as_deref(), Some("ghr_xyz789"));
+        assert_eq!(resp.expires_in, Some(28800));
+        assert_eq!(resp.refresh_token_expires_in, Some(15811200));
+    }
+
+    #[core::prelude::v1::test]
+    fn test_stored_token_backward_compat() {
+        let json = r#"{"access_token": "old-token"}"#;
+        let stored: StoredToken = serde_json::from_str(json).unwrap();
+        assert_eq!(stored.access_token, "old-token");
+        assert_eq!(stored.refresh_token, None);
+    }
+
+    #[core::prelude::v1::test]
+    fn test_stored_token_with_refresh() {
+        let stored = StoredToken {
+            access_token: "at".to_string(),
+            refresh_token: Some("rt".to_string()),
+        };
+        let json = serde_json::to_string(&stored).unwrap();
+        let deserialized: StoredToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.access_token, "at");
+        assert_eq!(deserialized.refresh_token.as_deref(), Some("rt"));
     }
 }

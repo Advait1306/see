@@ -47,6 +47,7 @@ pub struct GitHubStore {
     repo: String,
     auth_state: AuthState,
     token: Option<String>,
+    refresh_token: Option<String>,
     pull_requests: Vec<PullRequest>,
     pr_details: HashMap<u64, PrDetailCache>,
     _poll_task: Option<Task<()>>,
@@ -62,6 +63,7 @@ impl GitHubStore {
             repo,
             auth_state: AuthState::Unauthenticated,
             token: None,
+            refresh_token: None,
             pull_requests: Vec::new(),
             pr_details: HashMap::new(),
             _poll_task: None,
@@ -70,6 +72,7 @@ impl GitHubStore {
 
         if let Some(stored) = Self::load_token() {
             store.token = Some(stored.access_token);
+            store.refresh_token = stored.refresh_token;
             store.auth_state = AuthState::CheckingInstallation;
             store.check_installation(cx);
         }
@@ -86,9 +89,10 @@ impl GitHubStore {
         serde_json::from_str(&content).ok()
     }
 
-    fn save_token(token: &str) {
+    fn save_token(access_token: &str, refresh_token: Option<&str>) {
         let stored = StoredToken {
-            access_token: token.to_string(),
+            access_token: access_token.to_string(),
+            refresh_token: refresh_token.map(|s| s.to_string()),
         };
         config::save_json(&config::github_token_path(), &stored);
     }
@@ -140,10 +144,17 @@ impl GitHubStore {
                     .header("User-Agent", "august-app")
                     .send();
 
-                let body = match resp {
-                    Ok(r) => r.text().unwrap_or_default(),
+                let response = match resp {
+                    Ok(r) => r,
                     Err(e) => return Err(e.to_string()),
                 };
+
+                let status = response.status();
+                let body = response.text().unwrap_or_default();
+
+                if status == reqwest::StatusCode::UNAUTHORIZED {
+                    return Err("unauthorized".to_string());
+                }
 
                 let installations: InstallationListResponse = match serde_json::from_str(&body) {
                     Ok(i) => i,
@@ -211,6 +222,11 @@ impl GitHubStore {
                         cx.emit(GitHubStoreEvent::AuthStateChanged);
                         cx.notify();
                         store.start_polling(cx);
+                    });
+                }
+                Err(ref e) if e == "unauthorized" => {
+                    let _ = this.update(cx, |store, cx| {
+                        store.refresh_access_token(cx);
                     });
                 }
                 Err(install_url) => {
@@ -324,7 +340,7 @@ impl GitHubStore {
                     match resp {
                         Ok(r) => {
                             let body = r.text().unwrap_or_default();
-                            serde_json::from_str::<crate::github::AccessTokenResponse>(&body)
+                            serde_json::from_str::<crate::github::TokenResponse>(&body)
                                 .map_err(|e| {
                                     log::error!(
                                         "Failed to parse access token response: {} body: {}",
@@ -367,9 +383,13 @@ impl GitHubStore {
                 }
 
                 if !token_resp.access_token.is_empty() {
-                    Self::save_token(&token_resp.access_token);
+                    Self::save_token(
+                        &token_resp.access_token,
+                        token_resp.refresh_token.as_deref(),
+                    );
                     let _ = this.update(cx, |store, cx| {
                         store.token = Some(token_resp.access_token.clone());
+                        store.refresh_token = token_resp.refresh_token.clone();
                         store.auth_state = AuthState::CheckingInstallation;
                         store._auth_poll_task = None;
                         cx.emit(GitHubStoreEvent::AuthStateChanged);
@@ -385,6 +405,7 @@ impl GitHubStore {
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
         Self::clear_token();
         self.token = None;
+        self.refresh_token = None;
         self.auth_state = AuthState::Unauthenticated;
         self.pull_requests.clear();
         self.pr_details.clear();
@@ -392,6 +413,74 @@ impl GitHubStore {
         self._auth_poll_task = None;
         cx.emit(GitHubStoreEvent::AuthStateChanged);
         cx.notify();
+    }
+
+    fn refresh_access_token(&mut self, cx: &mut Context<Self>) {
+        let refresh_token = match &self.refresh_token {
+            Some(t) => t.clone(),
+            None => {
+                self.sign_out(cx);
+                return;
+            }
+        };
+
+        self.auth_state = AuthState::CheckingInstallation;
+        cx.emit(GitHubStoreEvent::AuthStateChanged);
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = smol::unblock(move || {
+                let http = reqwest::blocking::Client::new();
+                let resp = http
+                    .post("https://github.com/login/oauth/access_token")
+                    .header("Accept", "application/json")
+                    .header("User-Agent", "august-app")
+                    .form(&[
+                        ("client_id", GITHUB_CLIENT_ID),
+                        ("grant_type", "refresh_token"),
+                        ("refresh_token", refresh_token.as_str()),
+                    ])
+                    .send();
+
+                match resp {
+                    Ok(r) => {
+                        let body = r.text().unwrap_or_default();
+                        serde_json::from_str::<crate::github::TokenResponse>(&body).map_err(|e| {
+                            log::error!(
+                                "Failed to parse refresh token response: {} body: {}",
+                                e,
+                                body
+                            );
+                            e.to_string()
+                        })
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
+            })
+            .await;
+
+            match result {
+                Ok(token_resp) if !token_resp.access_token.is_empty() && token_resp.error.is_none() => {
+                    Self::save_token(
+                        &token_resp.access_token,
+                        token_resp.refresh_token.as_deref(),
+                    );
+                    let _ = this.update(cx, |store, cx| {
+                        store.token = Some(token_resp.access_token.clone());
+                        if let Some(new_rt) = token_resp.refresh_token.clone() {
+                            store.refresh_token = Some(new_rt);
+                        }
+                        store.check_installation(cx);
+                    });
+                }
+                _ => {
+                    let _ = this.update(cx, |store, cx| {
+                        store.sign_out(cx);
+                    });
+                }
+            }
+        })
+        .detach();
     }
 
     fn start_polling(&mut self, cx: &mut Context<Self>) {
@@ -429,6 +518,15 @@ impl GitHubStore {
                         });
                     }
                     Err(e) => {
+                        if e.status()
+                            .is_some_and(|s| s == reqwest::StatusCode::UNAUTHORIZED)
+                        {
+                            let _ = this.update(cx, |store, cx| {
+                                store._poll_task = None;
+                                store.refresh_access_token(cx);
+                            });
+                            return;
+                        }
                         if e.status().is_some_and(|s| {
                             s == reqwest::StatusCode::FORBIDDEN
                                 || s == reqwest::StatusCode::NOT_FOUND
@@ -472,7 +570,13 @@ impl GitHubStore {
                     });
                 }
                 Err(e) => {
-                    if e.status().is_some_and(|s| {
+                    if e.status()
+                        .is_some_and(|s| s == reqwest::StatusCode::UNAUTHORIZED)
+                    {
+                        let _ = this.update(cx, |store, cx| {
+                            store.refresh_access_token(cx);
+                        });
+                    } else if e.status().is_some_and(|s| {
                         s == reqwest::StatusCode::FORBIDDEN
                             || s == reqwest::StatusCode::NOT_FOUND
                     }) {
@@ -604,11 +708,13 @@ mod tests {
         test_helpers::run_gpui_test(|cx| {
             let _fixture = test_helpers::TestFixture::new(cx);
 
-            GitHubStore::save_token("test-token-123");
+            GitHubStore::save_token("test-token-123", None);
 
             let loaded = GitHubStore::load_token();
             assert!(loaded.is_some());
-            assert_eq!(loaded.unwrap().access_token, "test-token-123");
+            let loaded = loaded.unwrap();
+            assert_eq!(loaded.access_token, "test-token-123");
+            assert_eq!(loaded.refresh_token, None);
         });
     }
 
@@ -645,7 +751,7 @@ mod tests {
         test_helpers::run_gpui_test(|cx| {
             let _fixture = test_helpers::TestFixture::new(cx);
 
-            GitHubStore::save_token("existing-token");
+            GitHubStore::save_token("existing-token", None);
 
             let loaded = GitHubStore::load_token();
             assert!(loaded.is_some());
@@ -768,6 +874,58 @@ mod tests {
                 assert!(s.pr_details(1).is_some());
                 assert!(s.pr_details(2).is_some());
                 assert!(s.pr_details(3).is_none());
+            });
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_save_and_load_token_with_refresh() {
+        test_helpers::run_gpui_test(|cx| {
+            let _fixture = test_helpers::TestFixture::new(cx);
+
+            GitHubStore::save_token("at", Some("rt"));
+
+            let loaded = GitHubStore::load_token().unwrap();
+            assert_eq!(loaded.access_token, "at");
+            assert_eq!(loaded.refresh_token.as_deref(), Some("rt"));
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_save_token_without_refresh() {
+        test_helpers::run_gpui_test(|cx| {
+            let _fixture = test_helpers::TestFixture::new(cx);
+
+            GitHubStore::save_token("at", None);
+
+            let loaded = GitHubStore::load_token().unwrap();
+            assert_eq!(loaded.access_token, "at");
+            assert_eq!(loaded.refresh_token, None);
+        });
+    }
+
+    #[core::prelude::v1::test]
+    fn test_sign_out_clears_refresh_token() {
+        test_helpers::run_gpui_test(|cx| {
+            let _fixture = test_helpers::TestFixture::new(cx);
+
+            let store = cx.new(|cx| GitHubStore::new("owner".into(), "repo".into(), cx));
+
+            store.update(cx, |store, _cx| {
+                store.token = Some("test-token".to_string());
+                store.refresh_token = Some("test-refresh".to_string());
+                store.auth_state = AuthState::Authenticated;
+            });
+
+            store.update(cx, |store, cx| {
+                store.sign_out(cx);
+            });
+
+            cx.read(|cx| {
+                let s = store.read(cx);
+                assert_eq!(s.auth_state(), &AuthState::Unauthenticated);
+                assert!(s.token.is_none());
+                assert!(s.refresh_token.is_none());
             });
         });
     }
