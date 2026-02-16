@@ -1,7 +1,7 @@
 use crate::types::Tab;
 use crate::types::TabConfig;
 use crate::ui::{EditorView, TerminalView};
-use gpui::*;
+use gpui::{App, Entity, Focusable, Window};
 use serde::{Deserialize, Serialize};
 
 use super::Pane;

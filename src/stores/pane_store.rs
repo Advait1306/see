@@ -22,8 +22,7 @@ use crate::stores::TerminalStore;
 use crate::types::TabConfig;
 use crate::ui::pane::{Axis, DividerDrag, Pane, PaneEvent, SplitDirection, TabItem};
 use crate::ui::{EditorView, TerminalView};
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Pixels, Point};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -627,5 +626,175 @@ impl PaneStore {
                 self.remove_pane(&pane, cx);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    fn make_pane(cx: &mut TestAppContext) -> Entity<Pane> {
+        cx.new(|cx| Pane::new(PathBuf::from("/tmp"), cx))
+    }
+
+    #[test]
+    fn test_pane_store_split_root_pane() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let _ = &fixture; // keep alive for config isolation
+
+            let pane1 = make_pane(cx);
+            let store = cx.new(|cx| {
+                PaneStore::with_root("test".to_string(), Member::Pane(pane1.clone()), cx)
+            });
+
+            let new_pane = make_pane(cx);
+            store.update(cx, |store, cx| {
+                store.split_pane(&pane1, new_pane.clone(), SplitDirection::Right, cx);
+            });
+
+            cx.read(|cx| {
+                let s = store.read(cx);
+                assert_eq!(s.pane_count(), 2);
+                assert!(matches!(s.root, Member::Axis(_)));
+            });
+        });
+    }
+
+    #[test]
+    fn test_pane_store_remove_pane_collapses_axis() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let _ = &fixture;
+
+            let pane1 = make_pane(cx);
+            let store = cx.new(|cx| {
+                PaneStore::with_root("test".to_string(), Member::Pane(pane1.clone()), cx)
+            });
+
+            let pane2 = make_pane(cx);
+            store.update(cx, |store, cx| {
+                store.split_pane(&pane1, pane2.clone(), SplitDirection::Right, cx);
+            });
+
+            store.update(cx, |store, cx| {
+                store.remove_pane(&pane2, cx);
+            });
+
+            cx.read(|cx| {
+                let s = store.read(cx);
+                assert_eq!(s.pane_count(), 1);
+                assert!(matches!(s.root, Member::Pane(_)));
+            });
+        });
+    }
+
+    #[test]
+    fn test_pane_store_active_pane_updates_on_split() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let _ = &fixture;
+
+            let pane1 = make_pane(cx);
+            let store = cx.new(|cx| {
+                PaneStore::with_root("test".to_string(), Member::Pane(pane1.clone()), cx)
+            });
+
+            let pane2 = make_pane(cx);
+            store.update(cx, |store, cx| {
+                store.split_pane(&pane1, pane2.clone(), SplitDirection::Right, cx);
+            });
+
+            cx.read(|cx| {
+                let s = store.read(cx);
+                // After split, active pane should be the new pane
+                assert_eq!(s.active_pane.as_ref().unwrap().entity_id(), pane2.entity_id());
+            });
+        });
+    }
+
+    #[test]
+    fn test_pane_store_remove_active_pane_falls_back() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let _ = &fixture;
+
+            let pane1 = make_pane(cx);
+            let store = cx.new(|cx| {
+                PaneStore::with_root("test".to_string(), Member::Pane(pane1.clone()), cx)
+            });
+
+            let pane2 = make_pane(cx);
+            store.update(cx, |store, cx| {
+                store.split_pane(&pane1, pane2.clone(), SplitDirection::Right, cx);
+            });
+
+            // Active pane is pane2 after split. Remove it.
+            store.update(cx, |store, cx| {
+                store.remove_pane(&pane2, cx);
+            });
+
+            cx.read(|cx| {
+                let s = store.read(cx);
+                // Should fall back to remaining pane
+                assert!(s.active_pane.is_some());
+                assert_eq!(s.active_pane.as_ref().unwrap().entity_id(), pane1.entity_id());
+            });
+        });
+    }
+
+    #[test]
+    fn test_pane_axis_equal_ratios() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let _ = &fixture;
+
+            let pane1 = make_pane(cx);
+            let pane2 = make_pane(cx);
+            let pane3 = make_pane(cx);
+
+            let axis = PaneAxis::new(
+                Axis::Horizontal,
+                vec![
+                    Member::Pane(pane1),
+                    Member::Pane(pane2),
+                    Member::Pane(pane3),
+                ],
+            );
+
+            let expected = 1.0 / 3.0;
+            for ratio in &axis.ratios {
+                assert!((ratio - expected).abs() < 0.001);
+            }
+        });
+    }
+
+    #[test]
+    fn test_pane_axis_remove_normalizes_ratios() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let fixture = crate::test_helpers::TestFixture::new(cx);
+            let _ = &fixture;
+
+            let pane1 = make_pane(cx);
+            let pane2 = make_pane(cx);
+            let pane3 = make_pane(cx);
+
+            let mut axis = PaneAxis::new(
+                Axis::Horizontal,
+                vec![
+                    Member::Pane(pane1),
+                    Member::Pane(pane2.clone()),
+                    Member::Pane(pane3),
+                ],
+            );
+
+            axis.remove_pane(&pane2);
+
+            assert_eq!(axis.members.len(), 2);
+            assert_eq!(axis.ratios.len(), 2);
+            let total: f32 = axis.ratios.iter().sum();
+            assert!((total - 1.0).abs() < 0.001, "Ratios should sum to 1.0, got {}", total);
+        });
     }
 }

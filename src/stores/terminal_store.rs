@@ -1,5 +1,5 @@
 use crate::terminal::Terminal;
-use gpui::*;
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use uuid::Uuid;

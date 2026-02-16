@@ -1,4 +1,4 @@
-use gpui::*;
+use gpui::{App, Focusable, Render};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

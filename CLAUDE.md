@@ -1,6 +1,6 @@
 # Claude Instructions
 
-- Never commit without the user's explicit command
+- Never commit or push code unless the user explicitly asks you to
 - Reference codebase: Zed editor is available at ~/Desktop/projects/zed for architecture reference (don't search the web for it)
 - Never run `cargo run` - always let the user run it themselves
 - Always bundle the app (`cargo bundle --release`) after building for final review by the user

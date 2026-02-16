@@ -118,3 +118,80 @@ pub fn compute_line_diffs(hunks: &[DiffHunk], line_count: usize) -> Vec<LineDiff
 
     line_diffs
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_hunks_no_changes() {
+        let text = "line 1\nline 2\nline 3\n";
+        let hunks = compute_hunks(text, text);
+        assert!(hunks.is_empty());
+    }
+
+    #[test]
+    fn test_compute_hunks_added_lines() {
+        let old = "line 1\nline 2\n";
+        let new = "line 1\nline 2\nline 3\n";
+        let hunks = compute_hunks(old, new);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].status, DiffHunkStatus::Added);
+    }
+
+    #[test]
+    fn test_compute_hunks_deleted_lines() {
+        let old = "line 1\nline 2\nline 3\n";
+        let new = "line 1\nline 2\n";
+        let hunks = compute_hunks(old, new);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].status, DiffHunkStatus::Deleted);
+    }
+
+    #[test]
+    fn test_compute_hunks_modified_lines() {
+        let old = "line 1\nline 2\nline 3\n";
+        let new = "line 1\nchanged\nline 3\n";
+        let hunks = compute_hunks(old, new);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].status, DiffHunkStatus::Modified);
+    }
+
+    #[test]
+    fn test_compute_line_diffs_added() {
+        let hunks = vec![DiffHunk {
+            buffer_range: 1..3,
+            status: DiffHunkStatus::Added,
+        }];
+        let diffs = compute_line_diffs(&hunks, 5);
+        assert_eq!(diffs[0], LineDiff::Unchanged);
+        assert_eq!(diffs[1], LineDiff::Added);
+        assert_eq!(diffs[2], LineDiff::Added);
+        assert_eq!(diffs[3], LineDiff::Unchanged);
+    }
+
+    #[test]
+    fn test_compute_line_diffs_deleted_above() {
+        let hunks = vec![DiffHunk {
+            buffer_range: 2..2,
+            status: DiffHunkStatus::Deleted,
+        }];
+        let diffs = compute_line_diffs(&hunks, 5);
+        assert_eq!(diffs[0], LineDiff::Unchanged);
+        assert_eq!(diffs[1], LineDiff::Unchanged);
+        assert_eq!(diffs[2], LineDiff::DeletedAbove);
+        assert_eq!(diffs[3], LineDiff::Unchanged);
+    }
+
+    #[test]
+    fn test_compute_line_diffs_unchanged() {
+        let diffs = compute_line_diffs(&[], 3);
+        assert!(diffs.iter().all(|d| *d == LineDiff::Unchanged));
+    }
+
+    #[test]
+    fn test_compute_line_diffs_empty_hunks() {
+        let diffs = compute_line_diffs(&[], 0);
+        assert!(diffs.is_empty());
+    }
+}

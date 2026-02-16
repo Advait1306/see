@@ -1,6 +1,6 @@
 use crate::config;
 use super::{Workspace, WorkspaceData, WorkspaceEvent};
-use gpui::*;
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;

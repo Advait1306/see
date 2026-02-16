@@ -46,8 +46,10 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape as AlacCursorShape, NamedColor};
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    point, px, relative, fill, App, Bounds, Element, ElementId, GlobalElementId, Hsla,
+    InspectorElementId, IntoElement, LayoutId, Pixels, Point, Size, Style, Window,
+};
 use gpui_component::theme::ActiveTheme;
 use std::sync::Arc;
 
@@ -199,7 +201,7 @@ impl Element for TerminalElement {
                 };
 
                 // Calculate pixel position for cursor
-                let cursor_origin = gpui::point(
+                let cursor_origin = point(
                     px(cursor_col as f32 * CELL_WIDTH),
                     px(cursor_screen_line as f32 * CELL_HEIGHT),
                 );
@@ -343,14 +345,14 @@ impl Element for TerminalElement {
     ) {
         let cell_width = px(CELL_WIDTH);
         let line_height = px(CELL_HEIGHT);
-        let origin = bounds.origin + gpui::point(px(PADDING), px(PADDING));
+        let origin = bounds.origin + point(px(PADDING), px(PADDING));
 
         // Paint background
         window.paint_quad(fill(bounds, layout.background_color));
 
         // Paint selection highlights (before text so it appears behind)
         for range in &layout.selection_ranges {
-            let pos = gpui::Point::new(
+            let pos = Point::new(
                 origin.x + px(range.start_col as f32 * CELL_WIDTH),
                 origin.y + px(range.line as f32 * CELL_HEIGHT),
             );

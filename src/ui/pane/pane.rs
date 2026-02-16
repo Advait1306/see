@@ -1,8 +1,12 @@
 use crate::stores::TerminalStore;
 use crate::types::Tab;
 use crate::ui::TerminalView;
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    div, px, relative, App, AppContext as _, Context, ElementId, EventEmitter, Focusable,
+    FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Window,
+};
+use gpui::prelude::FluentBuilder;
 use gpui_component::theme::ActiveTheme;
 use std::path::PathBuf;
 
@@ -95,6 +99,7 @@ impl Pane {
         let muted_color = theme.muted_foreground;
 
         div()
+            .debug_selector(|| "pane-tab-bar".into())
             .flex()
             .h(px(32.0))
             .bg(tab_bar_bg)
@@ -177,6 +182,7 @@ impl Pane {
             .child(
                 div()
                     .id("pane-add-terminal")
+                    .debug_selector(|| "pane-add-terminal".into())
                     .px_2()
                     .py_1()
                     .rounded_sm()
@@ -323,6 +329,7 @@ impl Render for Pane {
             .child(
                 div()
                     .id("pane-content-container")
+                    .debug_selector(|| "pane-content-container".into())
                     .flex_1()
                     .w_full()
                     .min_h_0()
@@ -343,5 +350,45 @@ impl Render for Pane {
 impl Focusable for Pane {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pane_tab_bar_renders() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = crate::test_helpers::TestFixture::new(cx);
+            cx.update(|cx| gpui_component::init(cx));
+
+            let (_view, cx) = cx.add_window_view(|_window, cx| {
+                Pane::new(PathBuf::from("/tmp"), cx)
+            });
+
+            assert!(cx.debug_bounds("pane-tab-bar").is_some(), "tab bar should be rendered");
+            assert!(
+                cx.debug_bounds("pane-content-container").is_some(),
+                "content container should be rendered"
+            );
+        });
+    }
+
+    #[test]
+    fn test_pane_add_terminal_button_renders() {
+        crate::test_helpers::run_gpui_test(|cx| {
+            let _fixture = crate::test_helpers::TestFixture::new(cx);
+            cx.update(|cx| gpui_component::init(cx));
+
+            let (_view, cx) = cx.add_window_view(|_window, cx| {
+                Pane::new(PathBuf::from("/tmp"), cx)
+            });
+
+            assert!(
+                cx.debug_bounds("pane-add-terminal").is_some(),
+                "add terminal button should be rendered"
+            );
+        });
     }
 }

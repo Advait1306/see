@@ -2,7 +2,7 @@
 //!
 //! Commands are defined as GPUI actions and bound to keystrokes.
 
-use gpui::*;
+use gpui::{actions, App, KeyBinding};
 
 // Pane commands (works for terminal, editor, future pane types)
 actions!(

@@ -1,7 +1,7 @@
 use super::super::git::GitStore;
 use super::super::{FileStore, FileStoreEvent, PaneStore, PaneStoreEvent};
 use crate::ui::pane_group::PaneGroupView;
-use gpui::*;
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

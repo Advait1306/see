@@ -1,22 +1,15 @@
-mod assets;
-mod commands;
-mod config;
-mod constants;
-mod file_watcher;
-mod stores;
-mod syntax;
-mod terminal;
-mod types;
-mod ui;
-
-use assets::Assets;
-use commands::Quit;
-use gpui::*;
+use august::assets::Assets;
+use august::commands::{self, Quit};
+use august::config;
+use august::stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
+use august::syntax::LanguageRegistry;
+use august::ui::WindowView;
+use gpui::{
+    App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, px,
+    size,
+};
 use gpui_component::Root;
 use std::borrow::Cow;
-use stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
-use syntax::LanguageRegistry;
-use ui::WindowView;
 
 fn main() {
     env_logger::init();
@@ -27,7 +20,7 @@ fn main() {
 
         // Register keybindings
         commands::register_keybindings(cx);
-        ui::command_menu::register_command_menu_keybindings(cx);
+        august::ui::command_menu::register_command_menu_keybindings(cx);
 
         // Handle app-level Quit action
         cx.on_action(|_: &Quit, cx| {

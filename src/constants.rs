@@ -46,3 +46,20 @@ pub fn rgb_to_hsla(r: u8, g: u8, b: u8) -> gpui::Hsla {
     }
     .into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rgb_to_hsla_black() {
+        let color = rgb_to_hsla(0, 0, 0);
+        assert!((color.l - 0.0).abs() < 0.01, "Black should have ~0 lightness, got {}", color.l);
+    }
+
+    #[test]
+    fn test_rgb_to_hsla_white() {
+        let color = rgb_to_hsla(255, 255, 255);
+        assert!((color.l - 1.0).abs() < 0.01, "White should have ~1.0 lightness, got {}", color.l);
+    }
+}

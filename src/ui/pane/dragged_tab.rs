@@ -1,5 +1,4 @@
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div};
 use gpui_component::theme::ActiveTheme;
 
 use super::{Pane, TabItem};

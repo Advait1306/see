@@ -1,4 +1,4 @@
-use gpui::*;
+use gpui::{App, Context, Entity, EventEmitter, Subscription};
 use serde::{Deserialize, Serialize};
 
 use crate::config;

@@ -1,6 +1,8 @@
 use crate::stores::{WindowStore, WindowStoreEvent, WorkspaceStore, WorkspaceStoreEvent};
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    div, App, Context, Entity, Focusable, FocusHandle, InteractiveElement, IntoElement,
+    ParentElement, Render, Styled, Subscription, Window,
+};
 use gpui_component::Side;
 use gpui_component::sidebar::{Sidebar, SidebarMenu, SidebarMenuItem};
 

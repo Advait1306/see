@@ -8,7 +8,7 @@ use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::tty::{self, Options as PtyOptions};
 use anyhow::Result;
-use gpui::*;
+use gpui::{Context, EventEmitter};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
