@@ -530,6 +530,7 @@ dependencies = [
  "gpui-component-assets",
  "log",
  "notify",
+ "nucleo-matcher",
  "parking_lot",
  "rfd",
  "ropey 1.6.1",
@@ -556,6 +557,7 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "uuid",
+ "walkdir",
 ]
 
 [[package]]
@@ -3817,6 +3819,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c70f219e21142367c70c0b30c6a9e3a14d55b4d12a204d897fbec83a0363f081"
 dependencies = [
  "winapi",
+]
+
+[[package]]
+name = "nucleo-matcher"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf33f538733d1a5a3494b836ba913207f14d9d4a1d3cd67030c5061bdd2cac85"
+dependencies = [
+ "memchr",
+ "unicode-segmentation",
 ]
 
 [[package]]
