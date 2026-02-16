@@ -150,10 +150,6 @@ impl WorkspaceStore {
         self.workspace_order.iter()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.workspaces.is_empty()
-    }
-
     pub fn first_workspace_id(&self) -> Option<&String> {
         self.workspace_order.first()
     }

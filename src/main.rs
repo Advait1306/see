@@ -17,6 +17,7 @@ fn main() {
 
         // Register keybindings
         commands::register_keybindings(cx);
+        august::ui::command_menu::register_command_menu_keybindings(cx);
 
         // Handle app-level Quit action
         cx.on_action(|_: &Quit, cx| {
@@ -50,15 +51,6 @@ fn main() {
                 ..Default::default()
             },
             |window, cx| {
-                // Ensure at least one workspace exists
-                let workspace_store = WorkspaceStore::global(cx);
-                if workspace_store.read(cx).is_empty() {
-                    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
-                    workspace_store.update(cx, |store, cx| {
-                        store.add_workspace("Home".to_string(), home, cx);
-                    });
-                }
-
                 let window_store = cx.new(|cx| WindowStore::new(cx));
                 let window_view = cx.new(|cx| WindowView::new(window_store.clone(), window, cx));
 
