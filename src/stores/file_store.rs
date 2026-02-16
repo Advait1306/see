@@ -1,6 +1,6 @@
 use crate::config;
 use crate::file_watcher::FileWatcher;
-use gpui::*;
+use gpui::{Context, EventEmitter, Task};
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 use serde::{Deserialize, Serialize};

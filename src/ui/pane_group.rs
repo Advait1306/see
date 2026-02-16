@@ -1,7 +1,11 @@
 use crate::stores::{Member, PaneAxis, PaneStore};
 use crate::ui::pane::{Axis, DividerDrag};
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    div, px, relative, AnyElement, AppContext as _, Bounds, Context, CursorStyle, DragMoveEvent, ElementId, Entity,
+    InteractiveElement, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, Render, Size, StatefulInteractiveElement, Styled, Window,
+};
+use gpui::prelude::FluentBuilder;
 use gpui_component::theme::ActiveTheme;
 
 const MIN_PANE_SIZE: f32 = 100.0;

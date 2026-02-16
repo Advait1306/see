@@ -1,6 +1,9 @@
 //! Batched text rendering for efficient terminal display
 
-use gpui::*;
+use gpui::{
+    fill, px, App, Bounds, Font, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, Point, Size,
+    TextRun, Window,
+};
 
 /// Batched text run - combines consecutive characters with same style
 pub(crate) struct BatchedTextRun {
@@ -35,8 +38,8 @@ impl BatchedTextRun {
         self.cell_count += 1;
     }
 
-    pub(crate) fn paint(&self, origin: gpui::Point<Pixels>, cell_width: Pixels, line_height: Pixels, window: &mut Window, cx: &mut App) {
-        let pos = gpui::Point::new(
+    pub(crate) fn paint(&self, origin: Point<Pixels>, cell_width: Pixels, line_height: Pixels, window: &mut Window, cx: &mut App) {
+        let pos = Point::new(
             origin.x + px(self.col as f32 * f32::from(cell_width)),
             origin.y + px(self.line as f32 * f32::from(line_height)),
         );

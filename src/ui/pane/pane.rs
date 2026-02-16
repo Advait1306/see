@@ -1,8 +1,12 @@
 use crate::stores::TerminalStore;
 use crate::types::Tab;
 use crate::ui::TerminalView;
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    div, px, relative, App, AppContext as _, Context, ElementId, EventEmitter, Focusable,
+    FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Window,
+};
+use gpui::prelude::FluentBuilder;
 use gpui_component::theme::ActiveTheme;
 use std::path::PathBuf;
 
@@ -353,7 +357,7 @@ impl Focusable for Pane {
 mod tests {
     use super::*;
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_pane_tab_bar_renders() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = crate::test_helpers::TestFixture::new(cx);
@@ -371,7 +375,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_pane_add_terminal_button_renders() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = crate::test_helpers::TestFixture::new(cx);

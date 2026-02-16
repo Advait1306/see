@@ -9,8 +9,13 @@ use crate::ui::diff_list::DiffList;
 use crate::ui::file_tree::FileTree;
 use crate::ui::pane_group::PaneGroupView;
 use crate::ui::workspace_sidebar::WorkspaceSidebar;
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    div, percentage, px, relative, Animation, App, AppContext as _, Context, Entity, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement,
+    Styled, Subscription, Transformation, Window,
+};
+use gpui::prelude::FluentBuilder;
+use gpui::AnimationExt;
 use gpui_component::theme::ActiveTheme;
 use gpui_component::{Icon, IconName, Sizable};
 
@@ -503,7 +508,7 @@ mod tests {
         fixture
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_toggle_file_tree() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
@@ -535,7 +540,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_toggle_diff_list() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
@@ -552,7 +557,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_toggle_workspace_sidebar() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
@@ -582,7 +587,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_title_bar_renders() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
@@ -598,7 +603,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_sidebar_initially_visible() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
@@ -615,7 +620,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_sidebar_hidden_when_collapsed() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
@@ -637,7 +642,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_right_sidebar_file_tree_renders() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
@@ -676,7 +681,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_right_sidebar_diff_list_renders() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
@@ -715,7 +720,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_layout_structure() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
@@ -734,7 +739,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_file_tree_and_diff_list_exclusive() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);

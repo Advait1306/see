@@ -4,7 +4,7 @@ use super::selection::Selection;
 use super::view::EditorView;
 use crate::stores::EditorState;
 use crate::types::SelectionPhase;
-use gpui::*;
+use gpui::{Context, KeyDownEvent};
 
 /// Check if a character is a word character (alphanumeric or underscore)
 pub(crate) fn is_word_char(ch: char) -> bool {

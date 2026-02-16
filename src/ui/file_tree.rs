@@ -1,8 +1,11 @@
 use crate::stores::{FileEntry, FileStore, WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
 use crate::ui::EditorView;
 use crate::ui::pane::TabItem;
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    div, px, App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, ParentElement, Render, Styled, Subscription, Window,
+};
+use gpui::prelude::FluentBuilder;
 use gpui_component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
 use gpui_component::theme::ActiveTheme;
 use gpui_component::{Icon, IconName, IndexPath, Selectable, Sizable};

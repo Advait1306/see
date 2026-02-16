@@ -3,8 +3,12 @@
 use crate::commands::{NextDiff, PrevDiff};
 use crate::stores::{ChangedFile, FileStatus, GitStore, GitStoreEvent, WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
 use crate::ui::editor::{EditorView, EditorViewOptions};
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    div, px, App, AppContext as _, Context, Entity, FocusHandle, Focusable, FontWeight,
+    InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Subscription, Window,
+};
+use gpui::prelude::FluentBuilder;
 use gpui_component::theme::ActiveTheme;
 use gpui_component::{Icon, IconName, Sizable};
 use std::path::PathBuf;

@@ -7,8 +7,12 @@ use super::selection::Selection;
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, PADDING};
 use crate::stores::{Buffer, BufferEvent, DiffLine, EditorState, EditorStore, OpenBufferError};
 use crate::types::{EditorTabConfig, SelectionPhase, Tab, TabConfig};
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    div, App, Bounds, Context, Entity, Focusable, FocusHandle, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    Render, ScrollDelta, ScrollWheelEvent, Styled, Subscription, Task, Window,
+};
+use gpui::prelude::FluentBuilder;
 use std::path::PathBuf;
 
 const DIFF_CONTEXT_LINES: usize = 3;
@@ -651,6 +655,7 @@ impl Tab for EditorView {
 mod tests {
     use super::*;
     use super::super::input::handle_key;
+    use gpui::{AppContext as _, Keystroke};
 
     fn simulate_key(view: &mut EditorView, key: &str, cx: &mut Context<EditorView>) {
         let event = KeyDownEvent {
@@ -668,7 +673,7 @@ mod tests {
         handle_key(view, &event, cx);
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_editor_cursor_movement() {
         crate::test_helpers::run_gpui_test(|cx| {
             let fixture = crate::test_helpers::TestFixture::new(cx);
@@ -727,7 +732,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_editor_type_text() {
         crate::test_helpers::run_gpui_test(|cx| {
             let fixture = crate::test_helpers::TestFixture::new(cx);
@@ -751,7 +756,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_editor_backspace() {
         crate::test_helpers::run_gpui_test(|cx| {
             let fixture = crate::test_helpers::TestFixture::new(cx);
@@ -781,7 +786,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_editor_enter_creates_newline() {
         crate::test_helpers::run_gpui_test(|cx| {
             let fixture = crate::test_helpers::TestFixture::new(cx);
@@ -811,7 +816,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_editor_undo_via_key() {
         crate::test_helpers::run_gpui_test(|cx| {
             let fixture = crate::test_helpers::TestFixture::new(cx);
@@ -844,7 +849,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_editor_redo_via_key() {
         crate::test_helpers::run_gpui_test(|cx| {
             let fixture = crate::test_helpers::TestFixture::new(cx);
@@ -882,7 +887,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_editor_save_via_key() {
         crate::test_helpers::run_gpui_test(|cx| {
             let fixture = crate::test_helpers::TestFixture::new(cx);
@@ -909,7 +914,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_editor_home_end_keys() {
         crate::test_helpers::run_gpui_test(|cx| {
             let fixture = crate::test_helpers::TestFixture::new(cx);
@@ -939,7 +944,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_editor_word_navigation() {
         crate::test_helpers::run_gpui_test(|cx| {
             let fixture = crate::test_helpers::TestFixture::new(cx);
@@ -981,7 +986,7 @@ mod tests {
         });
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_editor_cursor_wraps_at_line_boundary() {
         crate::test_helpers::run_gpui_test(|cx| {
             let fixture = crate::test_helpers::TestFixture::new(cx);

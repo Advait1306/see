@@ -22,8 +22,7 @@ use crate::stores::TerminalStore;
 use crate::types::TabConfig;
 use crate::ui::pane::{Axis, DividerDrag, Pane, PaneEvent, SplitDirection, TabItem};
 use crate::ui::{EditorView, TerminalView};
-use gpui::prelude::*;
-use gpui::{App, Context, Entity, EventEmitter, Pixels, Point};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Pixels, Point};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

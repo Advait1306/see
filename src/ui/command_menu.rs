@@ -1,8 +1,12 @@
 use crate::stores::{FileStore, WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
 use crate::ui::pane::TabItem;
 use crate::ui::EditorView;
-use gpui::prelude::*;
-use gpui::{actions, div, px, hsla, App, ElementId, Entity, FocusHandle, Focusable, IntoElement, KeyBinding, Keystroke, MouseButton, ParentElement, Render, ScrollHandle, Styled, Subscription, Window};
+use gpui::{
+    actions, div, hsla, px, App, AppContext as _, Context, ElementId, Entity, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, KeyBinding, Keystroke, MouseButton, ParentElement, Render,
+    ScrollHandle, StatefulInteractiveElement, Styled, Subscription, Window,
+};
+use gpui::prelude::FluentBuilder;
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::kbd::Kbd;
 use gpui_component::theme::ActiveTheme;

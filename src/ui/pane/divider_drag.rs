@@ -1,4 +1,4 @@
-use gpui::*;
+use gpui::{Context, IntoElement, Render, Window, div};
 
 use super::Axis;
 

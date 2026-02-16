@@ -4,7 +4,10 @@ use august::config;
 use august::stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
 use august::syntax::LanguageRegistry;
 use august::ui::WindowView;
-use gpui::*;
+use gpui::{
+    App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, px,
+    size,
+};
 use gpui_component::Root;
 use std::borrow::Cow;
 

@@ -9,15 +9,19 @@ use crate::types::{SelectionPhase, Tab, TabConfig, TerminalTabConfig};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as AlacPoint, Side};
 use alacritty_terminal::selection::SelectionType;
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    div, px, App, Bounds, ClipboardItem, Context, Entity, Focusable, FocusHandle,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent,
+    Styled, Window,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Convert pixel position to grid point and side
 fn pixel_to_grid_point(
-    position: gpui::Point<Pixels>,
-    origin: gpui::Point<Pixels>,
+    position: Point<Pixels>,
+    origin: Point<Pixels>,
     cols: usize,
     rows: usize,
     display_offset: usize,
