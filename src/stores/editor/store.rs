@@ -1,6 +1,5 @@
 use super::buffer::Buffer;
-use gpui::prelude::*;
-use gpui::{App, Context, Entity, EventEmitter, Global};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global};
 use ropey::Rope;
 use std::collections::HashMap;
 use std::io::BufReader;

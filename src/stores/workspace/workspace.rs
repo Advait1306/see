@@ -1,8 +1,8 @@
 use super::super::git::GitStore;
 use super::super::github_store::GitHubStore;
-use super::super::{FileTreeStore, FileTreeStoreEvent, PaneStore, PaneStoreEvent};
+use super::super::{FileStore, FileStoreEvent, PaneStore, PaneStoreEvent};
 use crate::ui::pane_group::PaneGroupView;
-use gpui::*;
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -18,7 +18,7 @@ pub struct Workspace {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
-    file_tree_store: Entity<FileTreeStore>,
+    file_store: Entity<FileStore>,
     git_store: Option<Entity<GitStore>>,
     github_store: Option<Entity<GitHubStore>>,
     pane_store: Entity<PaneStore>,
@@ -28,7 +28,7 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(id: String, name: String, path: PathBuf, cx: &mut Context<Self>) -> Self {
-        let file_tree_store = cx.new(|cx| FileTreeStore::new(id.clone(), path.clone(), cx));
+        let file_store = cx.new(|cx| FileStore::new(id.clone(), path.clone(), cx));
         let git_store = if let Some(store) = GitStore::try_new(&path) {
             Some(cx.new(|cx| store.with_polling(cx)))
         } else {
@@ -59,8 +59,11 @@ impl Workspace {
 
         let mut subscriptions = Vec::new();
 
-        subscriptions.push(cx.subscribe(&file_tree_store, |_this, _store, event, cx| match event {
-            FileTreeStoreEvent::FileSystemChanged | FileTreeStoreEvent::ExpandedPathsChanged => {
+        subscriptions.push(cx.subscribe(&file_store, |_this, _store, event, cx| match event {
+            FileStoreEvent::FilesChanged
+            | FileStoreEvent::ExpandedPathsChanged
+            | FileStoreEvent::ScanStarted
+            | FileStoreEvent::ScanCompleted => {
                 cx.emit(WorkspaceEvent::FileTreeChanged);
             }
         }));
@@ -78,7 +81,7 @@ impl Workspace {
             id,
             name,
             path,
-            file_tree_store,
+            file_store,
             git_store,
             github_store,
             pane_store,
@@ -87,8 +90,8 @@ impl Workspace {
         }
     }
 
-    pub fn file_tree_store(&self) -> &Entity<FileTreeStore> {
-        &self.file_tree_store
+    pub fn file_store(&self) -> &Entity<FileStore> {
+        &self.file_store
     }
 
     pub fn git_store(&self) -> Option<&Entity<GitStore>> {

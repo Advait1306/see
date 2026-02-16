@@ -1,5 +1,5 @@
 mod editor;
-mod file_tree_store;
+mod file_store;
 mod git;
 pub mod github_store;
 mod pane_store;
@@ -8,7 +8,10 @@ mod window_store;
 mod workspace;
 
 pub use editor::{Buffer, BufferEvent, DiffLine, DiffLineTag, EditorState, EditorStore, OpenBufferError};
-pub use file_tree_store::{FileEntry, FileTreeStore, FileTreeStoreEvent};
+pub use file_store::{FileEntry, FileStore, FileStoreEvent};
+
+#[allow(unused_imports)]
+pub use file_store::ScanState;
 pub use git::{ChangedFile, FileStatus, GitStore, GitStoreEvent, LineDiff};
 pub use github_store::{AuthState, GitHubStore, GitHubStoreEvent};
 pub use pane_store::{Member, PaneAxis, PaneStore, PaneStoreEvent};

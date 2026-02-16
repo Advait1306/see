@@ -1,6 +1,6 @@
 use crate::config;
 use super::{Workspace, WorkspaceData, WorkspaceEvent};
-use gpui::*;
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -148,10 +148,6 @@ impl WorkspaceStore {
 
     pub fn workspace_ids(&self) -> impl Iterator<Item = &String> {
         self.workspace_order.iter()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.workspaces.is_empty()
     }
 
     pub fn first_workspace_id(&self) -> Option<&String> {

@@ -2,7 +2,7 @@
 //!
 //! Commands are defined as GPUI actions and bound to keystrokes.
 
-use gpui::*;
+use gpui::{actions, App, KeyBinding};
 
 // Pane commands (works for terminal, editor, future pane types)
 actions!(
@@ -30,6 +30,8 @@ actions!(
         ToggleFileTree,         // Right sidebar (file system)
         ToggleDiffList,         // Right sidebar (git diff)
         TogglePrList,           // Right sidebar (pull requests)
+        ShowCommandMenu,
+        HideCommandMenu,
         Quit,
     ]
 );
@@ -63,6 +65,9 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-l", ToggleFileTree, None),         // Right sidebar (files)
         KeyBinding::new("cmd-g", ToggleDiffList, None),         // Right sidebar (git)
         KeyBinding::new("cmd-shift-g", TogglePrList, None),    // Right sidebar (PRs)
+        // Command menu
+        KeyBinding::new("cmd-p", ShowCommandMenu, None),
+        KeyBinding::new("escape", HideCommandMenu, Some("CommandMenu")),
         // Tab key handling (only when Terminal has focus)
         KeyBinding::new("tab", SendTabToTerminal, Some("Terminal")),
         KeyBinding::new("shift-tab", SendShiftTabToTerminal, Some("Terminal")),

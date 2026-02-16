@@ -1,7 +1,10 @@
 //! Cursor rendering for terminal
 
 use alacritty_terminal::index::Point as AlacPoint;
-use gpui::*;
+use gpui::{
+    fill, outline, point, px, App, BorderStyle, Bounds, Font, FontFeatures, FontStyle, FontWeight,
+    Hsla, Pixels, Point, Size, TextRun, Window,
+};
 
 /// Helper struct for converting between Alacritty's cursor points and screen coordinates
 pub(crate) struct DisplayCursor {
@@ -37,7 +40,7 @@ pub(crate) enum CursorShape {
 
 /// Layout information for cursor rendering
 pub(crate) struct CursorLayout {
-    pub(crate) origin: gpui::Point<Pixels>,
+    pub(crate) origin: Point<Pixels>,
     pub(crate) block_width: Pixels,
     pub(crate) line_height: Pixels,
     pub(crate) color: Hsla,
@@ -48,7 +51,7 @@ pub(crate) struct CursorLayout {
 
 impl CursorLayout {
     pub(crate) fn new(
-        origin: gpui::Point<Pixels>,
+        origin: Point<Pixels>,
         block_width: Pixels,
         line_height: Pixels,
         color: Hsla,
@@ -67,7 +70,7 @@ impl CursorLayout {
         }
     }
 
-    pub(crate) fn bounds(&self, content_origin: gpui::Point<Pixels>) -> Bounds<Pixels> {
+    pub(crate) fn bounds(&self, content_origin: Point<Pixels>) -> Bounds<Pixels> {
         let origin = self.origin + content_origin;
         match self.shape {
             CursorShape::Bar => Bounds {
@@ -85,7 +88,7 @@ impl CursorLayout {
                 },
             },
             CursorShape::Underline => Bounds {
-                origin: origin + gpui::point(Pixels::ZERO, self.line_height - px(2.0)),
+                origin: origin + point(Pixels::ZERO, self.line_height - px(2.0)),
                 size: Size {
                     width: self.block_width,
                     height: px(2.0),
@@ -94,7 +97,7 @@ impl CursorLayout {
         }
     }
 
-    pub(crate) fn paint(&self, content_origin: gpui::Point<Pixels>, window: &mut Window, cx: &mut App) {
+    pub(crate) fn paint(&self, content_origin: Point<Pixels>, window: &mut Window, cx: &mut App) {
         let bounds = self.bounds(content_origin);
 
         // Draw cursor shape

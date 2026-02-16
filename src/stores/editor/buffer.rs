@@ -589,7 +589,7 @@ impl Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::prelude::*;
+    use gpui::AppContext as _;
 
     fn make_buffer_from_text(text: &str) -> Buffer {
         Buffer {
@@ -609,7 +609,7 @@ mod tests {
         }
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_line_col_to_offset_basic() {
         let buf = make_buffer_from_text("hello\nworld\n");
         assert_eq!(buf.line_col_to_offset(0, 0), 0);
@@ -618,7 +618,7 @@ mod tests {
         assert_eq!(buf.line_col_to_offset(1, 2), 8);
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_line_col_to_offset_clamped() {
         let buf = make_buffer_from_text("hi\nbye\n");
         // Col beyond line length should clamp
@@ -627,7 +627,7 @@ mod tests {
         assert_eq!(buf.line_col_to_offset(99, 0), buf.total_chars());
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_offset_to_line_col_roundtrip() {
         let buf = make_buffer_from_text("abc\ndef\nghi\n");
         for offset in 0..buf.total_chars() {
@@ -637,7 +637,7 @@ mod tests {
         }
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_line_len() {
         let buf = make_buffer_from_text("hello\nhi\n\n");
         assert_eq!(buf.line_len(0), 5);
@@ -645,13 +645,13 @@ mod tests {
         assert_eq!(buf.line_len(2), 0); // empty line before trailing newline
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_line_count() {
         let buf = make_buffer_from_text("a\nb\nc\n");
         assert_eq!(buf.line_count(), 4); // ropey counts trailing empty line
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_char_at() {
         let buf = make_buffer_from_text("abc");
         assert_eq!(buf.char_at(0), Some('a'));
@@ -659,19 +659,19 @@ mod tests {
         assert_eq!(buf.char_at(3), None);
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_total_chars() {
         let buf = make_buffer_from_text("hello");
         assert_eq!(buf.total_chars(), 5);
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_max_line_len() {
         let buf = make_buffer_from_text("short\nlonger line\nhi\n");
         assert_eq!(buf.max_line_len(), 11); // "longer line"
     }
 
-    #[core::prelude::v1::test]
+    #[test]
     fn test_file_name() {
         let mut buf = make_buffer_from_text("");
         assert_eq!(buf.file_name(), "test.txt");

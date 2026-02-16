@@ -1,4 +1,5 @@
 pub mod window_view;
+pub mod command_menu;
 pub mod diff_list;
 mod editor;
 pub mod file_tree;

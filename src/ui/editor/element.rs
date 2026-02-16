@@ -34,8 +34,11 @@ use super::view::EditorView;
 use crate::constants::{CELL_HEIGHT, CELL_WIDTH, GUTTER_MARKER_WIDTH, PADDING};
 use crate::stores::{Buffer, DiffLineTag, LineDiff};
 use crate::syntax::{HighlightSpan, SyntaxTheme};
-use gpui::prelude::*;
-use gpui::*;
+use gpui::{
+    App, BorderStyle, Bounds, ContentMask, Corners, Edges, Element, ElementId, Entity, Font,
+    FontFeatures, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement,
+    LayoutId, PaintQuad, Pixels, Size, Style, TextRun, Window, fill, px, relative,
+};
 use gpui_component::theme::ActiveTheme;
 
 /// Custom Element for efficient editor rendering

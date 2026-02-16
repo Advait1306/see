@@ -1,5 +1,5 @@
 use git2::{Repository, StatusOptions};
-use gpui::*;
+use gpui::{Context, EventEmitter, Task};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
