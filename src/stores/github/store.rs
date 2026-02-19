@@ -140,14 +140,13 @@ impl GitHubStore {
             None => return,
         };
 
-        let connected_remotes: Vec<(String, GitHubRepo)> = self
+        let remotes_to_fetch: Vec<(String, GitHubRepo)> = self
             .remotes
             .iter()
-            .filter(|(_, state)| state.auth_state == RemoteAuthState::Connected)
             .map(|(name, state)| (name.clone(), state.repo.clone()))
             .collect();
 
-        if connected_remotes.is_empty() {
+        if remotes_to_fetch.is_empty() {
             return;
         }
 
@@ -156,7 +155,7 @@ impl GitHubStore {
             let handle = http::http_runtime().handle().clone();
             let mut all_prs: HashMap<String, Vec<PullRequest>> = HashMap::new();
 
-            for (remote_name, repo) in &connected_remotes {
+            for (remote_name, repo) in &remotes_to_fetch {
                 let prs = {
                     let client = client.clone();
                     let token = token.clone();

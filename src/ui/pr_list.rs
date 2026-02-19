@@ -2,18 +2,21 @@ use crate::stores::github::{GitHubAccountStore, GitHubStore};
 use crate::stores::{WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
 use crate::types::github::{AuthState, PullRequest, RemoteAuthState};
 use gpui::{
-    div, px, App, ClipboardItem, Context, Entity, FocusHandle, Focusable,
+    div, px, uniform_list, App, ClipboardItem, Context, Entity, FocusHandle, Focusable,
     FontWeight, InteractiveElement, IntoElement, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, Window,
 };
 use gpui::prelude::FluentBuilder;
 use gpui_component::theme::ActiveTheme;
 use gpui_component::Icon;
-use gpui_component::scroll::ScrollableElement;
 use gpui_component::Sizable;
+use std::ops::Range;
+
+const PR_ROW_HEIGHT: f32 = 72.0;
 
 pub struct PrList {
     window_store: Entity<WindowStore>,
+    pull_requests: Vec<PullRequest>,
     focus_handle: FocusHandle,
     _account_subscription: Subscription,
     _workspace_subscription: Option<Subscription>,
@@ -30,12 +33,13 @@ impl PrList {
         let window_store_sub = cx.subscribe(&window_store, |this, _store, event, cx| {
             if matches!(event, WindowStoreEvent::ActiveWorkspaceChanged) {
                 this.subscribe_to_workspace(cx);
-                cx.notify();
+                this.refresh_pull_requests(cx);
             }
         });
 
         let mut view = Self {
             window_store,
+            pull_requests: Vec::new(),
             focus_handle: cx.focus_handle(),
             _account_subscription: account_sub,
             _workspace_subscription: None,
@@ -43,15 +47,16 @@ impl PrList {
         };
 
         view.subscribe_to_workspace(cx);
+        view.refresh_pull_requests(cx);
         view
     }
 
     fn subscribe_to_workspace(&mut self, cx: &mut Context<Self>) {
         let workspace = self.window_store.read(cx).active_workspace(cx);
         self._workspace_subscription = if let Some(workspace) = workspace {
-            Some(cx.subscribe(&workspace, |_this, _workspace, event, cx| {
+            Some(cx.subscribe(&workspace, |this, _workspace, event, cx| {
                 if matches!(event, WorkspaceEvent::PullRequestsUpdated) {
-                    cx.notify();
+                    this.refresh_pull_requests(cx);
                 }
             }))
         } else {
@@ -68,8 +73,8 @@ impl PrList {
             .and_then(|ws| ws.read(cx).github_store().cloned())
     }
 
-    fn pull_requests(&self, cx: &App) -> Vec<PullRequest> {
-        if let Some(github_store) = self.active_github_store(cx) {
+    fn refresh_pull_requests(&mut self, cx: &mut Context<Self>) {
+        self.pull_requests = if let Some(github_store) = self.active_github_store(cx) {
             github_store
                 .read(cx)
                 .all_pull_requests()
@@ -78,7 +83,8 @@ impl PrList {
                 .collect()
         } else {
             Vec::new()
-        }
+        };
+        cx.notify();
     }
 
     fn has_uninstalled_remotes(&self, cx: &App) -> bool {
@@ -134,7 +140,6 @@ impl Render for PrList {
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .overflow_y_scrollbar()
                     .map(|el| match &auth_state {
                         AuthState::SignedOut | AuthState::Error(_) => {
                             el.child(self.render_sign_in(cx, &auth_state))
@@ -146,7 +151,7 @@ impl Render for PrList {
                         AuthState::SignedIn { username: _ } => {
                             if !has_github_store {
                                 el.child(self.render_no_repo(cx))
-                            } else if self.has_uninstalled_remotes(cx) && self.pull_requests(cx).is_empty() {
+                            } else if self.has_uninstalled_remotes(cx) && self.pull_requests.is_empty() {
                                 el.child(self.render_install_prompt(cx))
                             } else {
                                 el.child(self.render_pull_requests(cx))
@@ -334,146 +339,144 @@ impl PrList {
 
     fn render_pull_requests(&self, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let prs = self.pull_requests(cx);
+        let count = self.pull_requests.len();
 
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .map(|el| {
-                if prs.is_empty() {
+        if count == 0 {
+            return div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("No open pull requests"),
+                )
+                .into_any_element();
+        }
+
+        uniform_list("pr-list-items", count, cx.processor(
+            |this, range: Range<usize>, _window, cx| {
+                let theme = cx.theme().clone();
+                range
+                    .filter_map(|ix| this.pull_requests.get(ix).map(|pr| (ix, pr.clone())))
+                    .map(|(ix, pr)| render_pr_row(&theme, &pr, ix))
+                    .collect()
+            },
+        ))
+        .size_full()
+        .into_any_element()
+    }
+
+}
+
+fn render_pr_row(
+    theme: &gpui_component::theme::Theme,
+    pr: &PullRequest,
+    index: usize,
+) -> impl IntoElement + use<> {
+    let url = pr.html_url.clone();
+
+    div()
+        .id(("pr-row", index))
+        .w_full()
+        .h(px(PR_ROW_HEIGHT))
+        .px(px(12.0))
+        .py(px(8.0))
+        .flex()
+        .flex_col()
+        .gap(px(2.0))
+        .cursor_pointer()
+        .hover(|s| s.bg(gpui::black().opacity(0.05)))
+        .border_b_1()
+        .border_color(theme.border.opacity(0.5))
+        .on_click(move |_, _, _| {
+            let _ = std::process::Command::new("open")
+                .arg(&url)
+                .spawn();
+        })
+        // Title row
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(
+                    Icon::default()
+                        .path("icons/git-pull-request.svg")
+                        .xsmall()
+                        .text_color(if pr.draft {
+                            theme.muted_foreground
+                        } else {
+                            theme.success
+                        }),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.foreground)
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(pr.title.clone()),
+                ),
+        )
+        // Metadata row
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .pl(px(20.0))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(format!("#{}", pr.number)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(pr.author_login.clone()),
+                )
+                .when(pr.draft, |el| {
                     el.child(
                         div()
-                            .w_full()
-                            .py(px(32.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .child("No open pull requests"),
-                            ),
-                    )
-                } else {
-                    let mut el = el;
-                    for (i, pr) in prs.iter().enumerate() {
-                        el = el.child(self.render_pr_row(cx, pr, i));
-                    }
-                    el
-                }
-            })
-    }
-
-    fn render_pr_row(
-        &self,
-        cx: &Context<Self>,
-        pr: &PullRequest,
-        index: usize,
-    ) -> impl IntoElement {
-        let theme = cx.theme();
-        let url = pr.html_url.clone();
-
-        div()
-            .id(("pr-row", index))
-            .w_full()
-            .px(px(12.0))
-            .py(px(8.0))
-            .flex()
-            .flex_col()
-            .gap(px(2.0))
-            .cursor_pointer()
-            .hover(|s| s.bg(theme.border.opacity(0.5)))
-            .border_b_1()
-            .border_color(theme.border.opacity(0.5))
-            .on_click(cx.listener(move |_this, _, _, _cx| {
-                let _ = std::process::Command::new("open")
-                    .arg(&url)
-                    .spawn();
-            }))
-            // Title row
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .child(
-                        Icon::default()
-                            .path("icons/git-pull-request.svg")
-                            .xsmall()
-                            .text_color(if pr.draft {
-                                theme.muted_foreground
-                            } else {
-                                theme.success
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.foreground)
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(pr.title.clone()),
-                    ),
-            )
-            // Metadata row
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .pl(px(20.0))
-                    .child(
-                        div()
                             .text_xs()
                             .text_color(theme.muted_foreground)
-                            .child(format!("#{}", pr.number)),
+                            .px(px(4.0))
+                            .py(px(1.0))
+                            .rounded(px(3.0))
+                            .bg(theme.border)
+                            .child("Draft"),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(pr.author_login.clone()),
-                    )
-                    .when(pr.draft, |el| {
-                        el.child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.muted_foreground)
-                                .px(px(4.0))
-                                .py(px(1.0))
-                                .rounded(px(3.0))
-                                .bg(theme.border)
-                                .child("Draft"),
-                        )
-                    }),
-            )
-            // Branch row
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .gap(px(4.0))
-                    .pl(px(20.0))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(format!(
-                                "{} \u{2190} {}",
-                                pr.base_ref, pr.head_ref
-                            )),
-                    ),
-            )
-    }
+                }),
+        )
+        // Branch row
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap(px(4.0))
+                .pl(px(20.0))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(format!(
+                            "{} \u{2190} {}",
+                            pr.base_ref, pr.head_ref
+                        )),
+                ),
+        )
 }
 
 impl Focusable for PrList {
