@@ -1,7 +1,7 @@
 use august::assets::Assets;
 use august::commands::{self, Quit};
 use august::config;
-use august::stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
+use august::stores::{EditorStore, GitHubAccountStore, TerminalStore, WindowStore, WorkspaceStore};
 use august::syntax::LanguageRegistry;
 use august::ui::WindowView;
 use gpui::{
@@ -36,6 +36,7 @@ fn main() {
         LanguageRegistry::init(cx);
         EditorStore::init(cx);
         TerminalStore::init(cx);
+        GitHubAccountStore::init(cx);
         WorkspaceStore::init(cx);
 
         cx.open_window(

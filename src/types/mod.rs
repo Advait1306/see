@@ -1,5 +1,6 @@
 //! Shared types used across multiple modules
 
+pub mod github;
 mod selection;
 mod tab;
 

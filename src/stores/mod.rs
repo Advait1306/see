@@ -1,6 +1,7 @@
 mod editor;
 mod file_store;
 mod git;
+pub mod github;
 mod pane_store;
 mod terminal_store;
 mod window_store;
@@ -12,6 +13,7 @@ pub use file_store::{FileEntry, FileStore, FileStoreEvent};
 #[allow(unused_imports)]
 pub use file_store::ScanState;
 pub use git::{ChangedFile, FileStatus, GitStore, GitStoreEvent, LineDiff};
+pub use github::{GitHubAccountStore, GitHubAccountStoreEvent, GitHubStore, GitHubStoreEvent};
 pub use pane_store::{Member, PaneAxis, PaneStore, PaneStoreEvent};
 pub use terminal_store::TerminalStore;
 pub use window_store::{RightSidebarPanel, WindowStore, WindowStoreEvent};

@@ -1,4 +1,5 @@
 use super::super::git::GitStore;
+use super::super::github::{GitHubStore, GitHubStoreEvent};
 use super::super::{FileStore, FileStoreEvent, PaneStore, PaneStoreEvent};
 use crate::ui::pane_group::PaneGroupView;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription};
@@ -9,6 +10,7 @@ use std::path::PathBuf;
 pub enum WorkspaceEvent {
     FileTreeChanged,
     PaneLayoutChanged,
+    PullRequestsUpdated,
 }
 
 impl EventEmitter<WorkspaceEvent> for Workspace {}
@@ -19,6 +21,7 @@ pub struct Workspace {
     pub path: PathBuf,
     file_store: Entity<FileStore>,
     git_store: Option<Entity<GitStore>>,
+    github_store: Option<Entity<GitHubStore>>,
     pane_store: Entity<PaneStore>,
     pane_group_view: Entity<PaneGroupView>,
     _subscriptions: Vec<Subscription>,
@@ -29,6 +32,13 @@ impl Workspace {
         let file_store = cx.new(|cx| FileStore::new(id.clone(), path.clone(), cx));
         let git_store = if let Some(store) = GitStore::try_new(&path) {
             Some(cx.new(|cx| store.with_polling(cx)))
+        } else {
+            None
+        };
+
+        let github_store = if let Some(git_store_entity) = &git_store {
+            let repository = git_store_entity.read(cx).repository().clone();
+            Some(cx.new(|cx| GitHubStore::new(&repository, cx).with_polling(cx)))
         } else {
             None
         };
@@ -64,12 +74,21 @@ impl Workspace {
             }
         }));
 
+        if let Some(github_store) = &github_store {
+            subscriptions.push(cx.subscribe(github_store, |_this, _store, event, cx| {
+                if matches!(event, GitHubStoreEvent::PullRequestsUpdated) {
+                    cx.emit(WorkspaceEvent::PullRequestsUpdated);
+                }
+            }));
+        }
+
         Self {
             id,
             name,
             path,
             file_store,
             git_store,
+            github_store,
             pane_store,
             pane_group_view,
             _subscriptions: subscriptions,
@@ -82,6 +101,10 @@ impl Workspace {
 
     pub fn git_store(&self) -> Option<&Entity<GitStore>> {
         self.git_store.as_ref()
+    }
+
+    pub fn github_store(&self) -> Option<&Entity<GitHubStore>> {
+        self.github_store.as_ref()
     }
 
     pub fn pane_store(&self) -> &Entity<PaneStore> {

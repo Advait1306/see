@@ -11,6 +11,7 @@ pub enum RightSidebarPanel {
     Hidden,
     FileTree,
     DiffList,
+    PullRequests,
 }
 
 #[derive(Clone)]
@@ -182,6 +183,16 @@ impl WindowStore {
         self.right_sidebar = match self.right_sidebar {
             RightSidebarPanel::DiffList => RightSidebarPanel::Hidden,
             _ => RightSidebarPanel::DiffList,
+        };
+        self.save();
+        cx.emit(WindowStoreEvent::UiStateChanged);
+        cx.notify();
+    }
+
+    pub fn toggle_pull_requests(&mut self, cx: &mut Context<Self>) {
+        self.right_sidebar = match self.right_sidebar {
+            RightSidebarPanel::PullRequests => RightSidebarPanel::Hidden,
+            _ => RightSidebarPanel::PullRequests,
         };
         self.save();
         cx.emit(WindowStoreEvent::UiStateChanged);

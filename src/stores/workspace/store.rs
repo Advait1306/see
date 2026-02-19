@@ -78,6 +78,9 @@ impl WorkspaceStore {
                         WorkspaceEvent::PaneLayoutChanged => {
                             cx.emit(WorkspaceStoreEvent::PaneLayoutChanged(id.clone()));
                         }
+                        WorkspaceEvent::PullRequestsUpdated => {
+                            cx.emit(WorkspaceStoreEvent::WorkspaceUpdated(id.clone()));
+                        }
                     }
                 }
             });
@@ -120,6 +123,9 @@ impl WorkspaceStore {
                     }
                     WorkspaceEvent::PaneLayoutChanged => {
                         cx.emit(WorkspaceStoreEvent::PaneLayoutChanged(id.clone()));
+                    }
+                    WorkspaceEvent::PullRequestsUpdated => {
+                        cx.emit(WorkspaceStoreEvent::WorkspaceUpdated(id.clone()));
                     }
                 }
             }

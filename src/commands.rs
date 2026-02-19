@@ -29,6 +29,7 @@ actions!(
         ToggleWorkspaceSidebar, // Left sidebar (workspaces)
         ToggleFileTree,         // Right sidebar (file system)
         ToggleDiffList,         // Right sidebar (git diff)
+        TogglePrList,           // Right sidebar (pull requests)
         ShowCommandMenu,
         HideCommandMenu,
         Quit,
@@ -57,6 +58,7 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-b", ToggleWorkspaceSidebar, None), // Left sidebar
         KeyBinding::new("cmd-l", ToggleFileTree, None),         // Right sidebar (files)
         KeyBinding::new("cmd-g", ToggleDiffList, None),         // Right sidebar (git)
+        KeyBinding::new("cmd-shift-p", TogglePrList, None),     // Right sidebar (PRs)
         // Command menu
         KeyBinding::new("cmd-p", ShowCommandMenu, None),
         KeyBinding::new("escape", HideCommandMenu, Some("CommandMenu")),

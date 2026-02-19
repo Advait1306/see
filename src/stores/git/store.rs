@@ -122,4 +122,8 @@ impl GitStore {
         &self.changed_files
     }
 
+    pub fn repository(&self) -> &Arc<Repository> {
+        &self.repository
+    }
+
 }
