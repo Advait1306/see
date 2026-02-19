@@ -32,7 +32,7 @@ impl Global for GlobalWorkspaceStore {}
 
 impl WorkspaceStore {
     pub fn init(cx: &mut App) {
-        let store = cx.new(|cx| Self::load(cx));
+        let store = cx.new(Self::load);
         cx.set_global(GlobalWorkspaceStore(store));
     }
 

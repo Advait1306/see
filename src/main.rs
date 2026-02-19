@@ -44,7 +44,6 @@ fn main() {
                     title: Some(config::APP_NAME.into()),
                     appears_transparent: true,
                     traffic_light_position: Some(point(px(12.0), px(12.0))),
-                    ..Default::default()
                 }),
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
@@ -54,7 +53,7 @@ fn main() {
                 ..Default::default()
             },
             |window, cx| {
-                let window_store = cx.new(|cx| WindowStore::new(cx));
+                let window_store = cx.new(WindowStore::new);
                 let window_view = cx.new(|cx| WindowView::new(window_store.clone(), window, cx));
 
                 // Set initial focus on the active content

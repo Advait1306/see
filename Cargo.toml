@@ -64,6 +64,9 @@ tree-sitter-yaml = "0.7"
 uuid = { version = "1.19.0", features = ["v4"] }
 walkdir = "2.5.0"
 
+[lints.clippy]
+wildcard_imports = "deny"
+
 [dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }
 tempfile = "3"

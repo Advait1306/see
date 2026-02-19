@@ -112,8 +112,8 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
         }
         "left" => {
             // If there's a selection, move cursor to start of selection
-            if let Some(selection) = view.selection.take() {
-                if !selection.is_empty() {
+            if let Some(selection) = view.selection.take()
+                && !selection.is_empty() {
                     let ((start_line, start_col), _) = selection.normalized();
                     view.cursor_line = start_line;
                     view.cursor_col = start_col;
@@ -122,7 +122,6 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
                     cx.notify();
                     return;
                 }
-            }
             view.selection_phase = SelectionPhase::None;
             if view.cursor_col > 0 {
                 view.cursor_col -= 1;
@@ -138,8 +137,8 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
         }
         "right" => {
             // If there's a selection, move cursor to end of selection
-            if let Some(selection) = view.selection.take() {
-                if !selection.is_empty() {
+            if let Some(selection) = view.selection.take()
+                && !selection.is_empty() {
                     let (_, (end_line, end_col)) = selection.normalized();
                     view.cursor_line = end_line;
                     view.cursor_col = end_col;
@@ -148,7 +147,6 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
                     cx.notify();
                     return;
                 }
-            }
             view.selection_phase = SelectionPhase::None;
             let line_len = buffer.read(cx).line_len(view.cursor_line);
             if view.cursor_col < line_len {
@@ -213,11 +211,10 @@ pub(crate) fn handle_key(view: &mut EditorView, event: &KeyDownEvent, cx: &mut C
         }
         _ => {
             // Handle regular character input
-            if let Some(key_char) = &event.keystroke.key_char {
-                if !key_char.is_empty() && !modifiers.control && !modifiers.platform {
+            if let Some(key_char) = &event.keystroke.key_char
+                && !key_char.is_empty() && !modifiers.control && !modifiers.platform {
                     insert_text(view, key_char, cx);
                 }
-            }
         }
     }
 }
@@ -345,16 +342,15 @@ pub(crate) fn move_word_left(view: &mut EditorView, cx: &mut Context<EditorView>
     }
 
     // Check if we landed on a newline (means we're at start of line)
-    if let Some(ch) = buffer.char_at(offset) {
-        if ch == '\n' {
+    if let Some(ch) = buffer.char_at(offset)
+        && ch == '\n' {
             offset += 1; // Move to start of line
         }
-    }
 
     // Now move to the start of the word (if we're in a word)
-    if offset > 0 {
-        if let Some(ch) = buffer.char_at(offset) {
-            if is_word_char(ch) {
+    if offset > 0
+        && let Some(ch) = buffer.char_at(offset)
+            && is_word_char(ch) {
                 while offset > 0 {
                     if let Some(prev_ch) = buffer.char_at(offset - 1) {
                         if !is_word_char(prev_ch) {
@@ -366,8 +362,6 @@ pub(crate) fn move_word_left(view: &mut EditorView, cx: &mut Context<EditorView>
                     }
                 }
             }
-        }
-    }
 
     let (line, col) = buffer.offset_to_line_col(offset);
     view.cursor_line = line;
@@ -389,8 +383,8 @@ pub(crate) fn move_word_right(view: &mut EditorView, cx: &mut Context<EditorView
     }
 
     // Check if we're at end of line (cursor at newline position)
-    if let Some(ch) = buffer.char_at(offset) {
-        if ch == '\n' {
+    if let Some(ch) = buffer.char_at(offset)
+        && ch == '\n' {
             // Move past the newline to next line
             offset += 1;
             // Skip any whitespace at start of next line to find next word
@@ -410,7 +404,6 @@ pub(crate) fn move_word_right(view: &mut EditorView, cx: &mut Context<EditorView
             view.ensure_cursor_visible(cx);
             return;
         }
-    }
 
     // Skip current word characters
     while offset < total_chars {

@@ -85,12 +85,11 @@ pub fn load_json<T: DeserializeOwned + Default>(path: &Path) -> T {
 }
 
 pub fn save_json<T: Serialize>(path: &Path, data: &T) {
-    if let Some(parent) = path.parent() {
-        if let Err(e) = fs::create_dir_all(parent) {
+    if let Some(parent) = path.parent()
+        && let Err(e) = fs::create_dir_all(parent) {
             log::error!("Failed to create config directory: {}", e);
             return;
         }
-    }
 
     match serde_json::to_string_pretty(data) {
         Ok(json) => {

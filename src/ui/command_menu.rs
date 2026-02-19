@@ -11,7 +11,7 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::kbd::Kbd;
 use gpui_component::theme::ActiveTheme;
 use gpui_component::{Icon, IconName, Sizable};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct CommandMenu {
     window_store: Entity<WindowStore>,
@@ -183,8 +183,8 @@ impl CommandMenu {
     fn render_item(
         &self,
         list_index: usize,
-        file_path: &PathBuf,
-        workspace_path: &PathBuf,
+        file_path: &Path,
+        workspace_path: &Path,
         is_selected: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {

@@ -1,4 +1,7 @@
-use crate::commands::*;
+use crate::commands::{
+    ClosePane, NextPane, NextWorkspace, PrevPane, PrevWorkspace, ShowCommandMenu,
+    ToggleDiffList, ToggleFileTree, ToggleWorkspaceSidebar,
+};
 use crate::config;
 use crate::stores::{
     FileStore, FileStoreEvent, PaneStore, RightSidebarPanel, ScanState, WindowStore,
@@ -104,11 +107,10 @@ impl WindowView {
     }
 
     pub fn focus_active_content(&self, window: &mut Window, cx: &App) {
-        if let Some(pane_store) = self.active_pane_store(cx) {
-            if let Some(pane) = &pane_store.read(cx).active_pane {
+        if let Some(pane_store) = self.active_pane_store(cx)
+            && let Some(pane) = &pane_store.read(cx).active_pane {
                 pane.read(cx).focus_active_tab(window, cx);
             }
-        }
     }
 
     pub fn toggle_file_tree(&mut self, cx: &mut Context<Self>) {
@@ -513,7 +515,7 @@ mod tests {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
 
-            let window_store = cx.new(|cx| WindowStore::new(cx));
+            let window_store = cx.new(WindowStore::new);
 
             // Initially hidden
             cx.read(|cx| {
@@ -545,7 +547,7 @@ mod tests {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
 
-            let window_store = cx.new(|cx| WindowStore::new(cx));
+            let window_store = cx.new(WindowStore::new);
 
             window_store.update(cx, |store, cx| {
                 store.toggle_diff_list(cx);
@@ -562,7 +564,7 @@ mod tests {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
 
-            let window_store = cx.new(|cx| WindowStore::new(cx));
+            let window_store = cx.new(WindowStore::new);
 
             // Initially not collapsed
             cx.read(|cx| {
@@ -591,7 +593,7 @@ mod tests {
     fn test_title_bar_renders() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
-            let window_store = cx.new(|cx| WindowStore::new(cx));
+            let window_store = cx.new(WindowStore::new);
 
             let (_view, cx) = cx.add_window_view(|window, cx| {
                 WindowView::new(window_store.clone(), window, cx)
@@ -607,7 +609,7 @@ mod tests {
     fn test_sidebar_initially_visible() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
-            let window_store = cx.new(|cx| WindowStore::new(cx));
+            let window_store = cx.new(WindowStore::new);
 
             let (_view, cx) = cx.add_window_view(|window, cx| {
                 WindowView::new(window_store.clone(), window, cx)
@@ -624,7 +626,7 @@ mod tests {
     fn test_sidebar_hidden_when_collapsed() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
-            let window_store = cx.new(|cx| WindowStore::new(cx));
+            let window_store = cx.new(WindowStore::new);
 
             // Collapse before creating the view
             window_store.update(cx, |store, cx| {
@@ -646,7 +648,7 @@ mod tests {
     fn test_right_sidebar_file_tree_renders() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
-            let window_store = cx.new(|cx| WindowStore::new(cx));
+            let window_store = cx.new(WindowStore::new);
 
             let (view, cx) = cx.add_window_view(|window, cx| {
                 WindowView::new(window_store.clone(), window, cx)
@@ -685,7 +687,7 @@ mod tests {
     fn test_right_sidebar_diff_list_renders() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
-            let window_store = cx.new(|cx| WindowStore::new(cx));
+            let window_store = cx.new(WindowStore::new);
 
             let (view, cx) = cx.add_window_view(|window, cx| {
                 WindowView::new(window_store.clone(), window, cx)
@@ -724,7 +726,7 @@ mod tests {
     fn test_layout_structure() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
-            let window_store = cx.new(|cx| WindowStore::new(cx));
+            let window_store = cx.new(WindowStore::new);
 
             let (_view, cx) = cx.add_window_view(|window, cx| {
                 WindowView::new(window_store.clone(), window, cx)
@@ -744,7 +746,7 @@ mod tests {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = init_test_stores(cx);
 
-            let window_store = cx.new(|cx| WindowStore::new(cx));
+            let window_store = cx.new(WindowStore::new);
 
             // Open file tree
             window_store.update(cx, |store, cx| {

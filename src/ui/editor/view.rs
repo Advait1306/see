@@ -440,8 +440,8 @@ impl Render for EditorView {
                 // Handle both vertical and horizontal scrolling with smooth accumulation
                 let (h_pixel_delta, v_pixel_delta) = match event.delta {
                     ScrollDelta::Lines(lines) => (
-                        f32::from(lines.x) * CELL_WIDTH * 3.0,
-                        f32::from(lines.y) * CELL_HEIGHT,
+                        lines.x * CELL_WIDTH * 3.0,
+                        lines.y * CELL_HEIGHT,
                     ),
                     ScrollDelta::Pixels(pixels) => (
                         f32::from(pixels.x),
@@ -524,13 +524,12 @@ impl Render for EditorView {
 
                 // In diff mode, check if clicking on a collapsed section but don't take focus
                 if let Some(ref diff_data) = this.diff_mode {
-                    if let Some(display_line) = diff_data.display_lines.get(line) {
-                        if let DiffDisplayLine::Collapsed { start_idx, end_idx, .. } = display_line {
+                    if let Some(display_line) = diff_data.display_lines.get(line)
+                        && let DiffDisplayLine::Collapsed { start_idx, end_idx, .. } = display_line {
                             // Expand this section
                             this.expand_diff_section(*start_idx, *end_idx);
                             cx.notify();
                         }
-                    }
                     return;
                 }
 
@@ -547,8 +546,8 @@ impl Render for EditorView {
                 let (_line, col) = this.pixel_to_line_col(event.position, bounds, cx);
 
                 // Shift+click extends selection
-                if event.modifiers.shift {
-                    if let Some(ref mut selection) = this.selection {
+                if event.modifiers.shift
+                    && let Some(ref mut selection) = this.selection {
                         selection.update(line, col);
                         this.selection_phase = SelectionPhase::Selecting;
                         this.cursor_line = line;
@@ -556,7 +555,6 @@ impl Render for EditorView {
                         cx.notify();
                         return;
                     }
-                }
 
                 // Start new selection
                 this.selection = Some(Selection::new(line, col));
@@ -590,11 +588,10 @@ impl Render for EditorView {
                 .on_mouse_up(MouseButton::Left, cx.listener(|this, _event: &MouseUpEvent, _, cx| {
                     if this.selection_phase == SelectionPhase::Selecting {
                         // If selection is empty, clear it
-                        if let Some(ref selection) = this.selection {
-                            if selection.is_empty() {
+                        if let Some(ref selection) = this.selection
+                            && selection.is_empty() {
                                 this.selection = None;
                             }
-                        }
                         this.selection_phase = SelectionPhase::Ended;
                         cx.notify();
                     }
@@ -629,7 +626,9 @@ impl Tab for EditorView {
         }
 
         // Get file name from buffer if available, otherwise from stored path
-        let file_name = if let Some(ref buffer) = self.buffer {
+        
+
+        if let Some(ref buffer) = self.buffer {
             let buf = buffer.read(cx);
             let name = buf.file_name();
             if buf.is_dirty() {
@@ -641,9 +640,7 @@ impl Tab for EditorView {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Unknown".to_string())
-        };
-
-        file_name
+        }
     }
 
     fn to_config(&self, _cx: &App) -> TabConfig {

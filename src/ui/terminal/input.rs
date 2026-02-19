@@ -9,15 +9,14 @@ pub(crate) fn key_to_input(event: &KeyDownEvent, mode: &TermMode) -> String {
     let modifiers = &event.keystroke;
     let app_cursor = mode.contains(TermMode::APP_CURSOR);
 
-    if modifiers.modifiers.control {
-        if key.len() == 1 {
+    if modifiers.modifiers.control
+        && key.len() == 1 {
             let c = key.chars().next().unwrap();
             if c.is_ascii_alphabetic() {
                 let ctrl_char = (c.to_ascii_lowercase() as u8 - b'a' + 1) as char;
                 return ctrl_char.to_string();
             }
         }
-    }
 
     // Handle special keys first
     // Arrow keys and cursor keys change based on APP_CURSOR mode
@@ -103,11 +102,10 @@ pub(crate) fn key_to_input(event: &KeyDownEvent, mode: &TermMode) -> String {
     }
 
     // Use key_char for actual typed character (handles shift for uppercase, etc.)
-    if let Some(key_char) = &event.keystroke.key_char {
-        if !key_char.is_empty() {
+    if let Some(key_char) = &event.keystroke.key_char
+        && !key_char.is_empty() {
             return key_char.clone();
         }
-    }
 
     // Fallback to key if it's a single character
     if key.len() == 1 {

@@ -123,14 +123,12 @@ impl WindowStore {
             .workspace_ids()
             .cloned()
             .collect();
-        if ids.len() > 1 {
-            if let Some(current_id) = &self.active_workspace_id {
-                if let Some(current_idx) = ids.iter().position(|id| id == current_id) {
+        if ids.len() > 1
+            && let Some(current_id) = &self.active_workspace_id
+                && let Some(current_idx) = ids.iter().position(|id| id == current_id) {
                     let new_idx = (current_idx + 1) % ids.len();
                     self.set_active_workspace(ids[new_idx].clone(), cx);
                 }
-            }
-        }
     }
 
     pub fn prev_workspace(&mut self, cx: &mut Context<Self>) {
@@ -139,9 +137,9 @@ impl WindowStore {
             .workspace_ids()
             .cloned()
             .collect();
-        if ids.len() > 1 {
-            if let Some(current_id) = &self.active_workspace_id {
-                if let Some(current_idx) = ids.iter().position(|id| id == current_id) {
+        if ids.len() > 1
+            && let Some(current_id) = &self.active_workspace_id
+                && let Some(current_idx) = ids.iter().position(|id| id == current_id) {
                     let new_idx = if current_idx == 0 {
                         ids.len() - 1
                     } else {
@@ -149,8 +147,6 @@ impl WindowStore {
                     };
                     self.set_active_workspace(ids[new_idx].clone(), cx);
                 }
-            }
-        }
     }
 
     pub fn sidebar_collapsed(&self) -> bool {

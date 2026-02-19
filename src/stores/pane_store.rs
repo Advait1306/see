@@ -108,7 +108,6 @@ impl PaneAxis {
         target: &Entity<Pane>,
         new_pane: Entity<Pane>,
         direction: SplitDirection,
-        cx: &mut App,
     ) -> bool {
         for (i, member) in self.members.iter_mut().enumerate() {
             match member {
@@ -137,7 +136,7 @@ impl PaneAxis {
                     return true;
                 }
                 Member::Axis(axis) => {
-                    if axis.find_and_split_pane(target, new_pane.clone(), direction, cx) {
+                    if axis.find_and_split_pane(target, new_pane.clone(), direction) {
                         return true;
                     }
                 }
@@ -328,10 +327,10 @@ impl PaneStore {
 
     /// Collect layout tree from current pane structure
     fn collect_layout(&self, cx: &App) -> LayoutNode {
-        self.collect_member_layout(&self.root, cx)
+        Self::collect_member_layout(&self.root, cx)
     }
 
-    fn collect_member_layout(&self, member: &Member, cx: &App) -> LayoutNode {
+    fn collect_member_layout(member: &Member, cx: &App) -> LayoutNode {
         match member {
             Member::Pane(pane) => {
                 let pane = pane.read(cx);
@@ -348,7 +347,7 @@ impl PaneStore {
                 children: axis
                     .members
                     .iter()
-                    .map(|m| self.collect_member_layout(m, cx))
+                    .map(|m| Self::collect_member_layout(m, cx))
                     .collect(),
             },
         }
@@ -401,7 +400,7 @@ impl PaneStore {
 
             }
             Member::Axis(axis) => {
-                axis.find_and_split_pane(target, new_pane.clone(), direction, cx);
+                axis.find_and_split_pane(target, new_pane.clone(), direction);
             }
             _ => {
                 log::info!("  No match for split target!");
@@ -421,11 +420,10 @@ impl PaneStore {
                 return;
             }
             Member::Axis(axis) => {
-                if axis.remove_pane(target) {
-                    if axis.members.len() == 1 {
+                if axis.remove_pane(target)
+                    && axis.members.len() == 1 {
                         self.root = axis.members.remove(0);
                     }
-                }
             }
             _ => {}
         }

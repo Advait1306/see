@@ -27,11 +27,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(id: String, name: String, path: PathBuf, cx: &mut Context<Self>) -> Self {
         let file_store = cx.new(|cx| FileStore::new(id.clone(), path.clone(), cx));
-        let git_store = if let Some(store) = GitStore::try_new(&path) {
-            Some(cx.new(|cx| store.with_polling(cx)))
-        } else {
-            None
-        };
+        let git_store = GitStore::try_new(&path).map(|store| cx.new(|cx| store.with_polling(cx)));
 
         let pane_store = {
             let id = id.clone();

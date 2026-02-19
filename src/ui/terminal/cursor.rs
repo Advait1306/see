@@ -110,9 +110,9 @@ impl CursorLayout {
         }
 
         // For block cursor, draw the character on top with inverted colors
-        if self.shape == CursorShape::Block {
-            if let Some(c) = self.cursor_char {
-                if c != ' ' && c != '\0' {
+        if self.shape == CursorShape::Block
+            && let Some(c) = self.cursor_char
+                && c != ' ' && c != '\0' {
                     let font = Font {
                         family: "Paper Mono".into(),
                         features: FontFeatures::default(),
@@ -143,7 +143,5 @@ impl CursorLayout {
                         cx,
                     );
                 }
-            }
-        }
     }
 }

@@ -319,11 +319,10 @@ impl Buffer {
     }
 
     pub fn check_external_changes(&self) -> bool {
-        if let Ok(metadata) = fs::metadata(&self.file_path) {
-            if let (Some(saved), Ok(current)) = (self.saved_mtime, metadata.modified()) {
+        if let Ok(metadata) = fs::metadata(&self.file_path)
+            && let (Some(saved), Ok(current)) = (self.saved_mtime, metadata.modified()) {
                 return current != saved;
             }
-        }
         false
     }
 

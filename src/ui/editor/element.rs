@@ -233,15 +233,14 @@ impl Element for EditorElement {
         let mut line_diffs = Vec::new();
         for i in 0..visible_line_count {
             let line_idx = self.scroll_offset + i;
-            if line_idx < line_count {
-                if let Some(line) = buffer.line(line_idx) {
+            if line_idx < line_count
+                && let Some(line) = buffer.line(line_idx) {
                     // Remove trailing newline for display
                     let line = line.trim_end_matches('\n').to_string();
                     let byte_offset = buffer.line_to_byte(line_idx);
                     visible_lines.push((line_idx + 1, line, byte_offset)); // 1-indexed line numbers
                     line_diffs.push(buffer.line_diff(line_idx));
                 }
-            }
         }
 
         let highlights = buffer
@@ -279,8 +278,8 @@ impl Element for EditorElement {
 
         // Calculate selection ranges for visible lines
         let mut selection_ranges = Vec::new();
-        if let Some(ref selection) = self.selection {
-            if !selection.is_empty() {
+        if let Some(ref selection) = self.selection
+            && !selection.is_empty() {
                 let ((start_line, start_col), (end_line, end_col)) = selection.normalized();
 
                 // Iterate through visible lines
@@ -316,7 +315,6 @@ impl Element for EditorElement {
                     }
                 }
             }
-        }
 
         EditorLayoutState {
             visible_lines,
@@ -520,8 +518,8 @@ impl Element for EditorElement {
 
             // Paint cursor (inside clip region) - only show when focused, with blink
             let should_show_cursor = is_focused && cursor_visible;
-            if let Some(pos) = cursor_pos {
-                if should_show_cursor {
+            if let Some(pos) = cursor_pos
+                && should_show_cursor {
                     let cursor_bounds = Bounds {
                         origin: origin + pos,
                         size: Size {
@@ -538,7 +536,6 @@ impl Element for EditorElement {
 
                     window.paint_quad(fill(cursor_bounds, color));
                 }
-            }
         });
     }
 }

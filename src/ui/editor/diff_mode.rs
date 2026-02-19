@@ -59,12 +59,11 @@ pub fn compute_display_lines(
         let start = idx.saturating_sub(context_lines);
         let end = (idx + context_lines + 1).min(all_lines.len());
 
-        if let Some(last) = visible_ranges.last_mut() {
-            if start <= last.1 {
+        if let Some(last) = visible_ranges.last_mut()
+            && start <= last.1 {
                 last.1 = end;
                 continue;
             }
-        }
         visible_ranges.push((start, end));
     }
 
@@ -78,8 +77,8 @@ pub fn compute_display_lines(
             let is_expanded = is_section_expanded(collapsed_start, collapsed_end, expanded_sections);
 
             if is_expanded {
-                for i in collapsed_start..collapsed_end {
-                    display_items.push(DiffDisplayLine::Line(all_lines[i].clone()));
+                for line in all_lines.iter().take(collapsed_end).skip(collapsed_start) {
+                    display_items.push(DiffDisplayLine::Line(line.clone()));
                 }
             } else {
                 display_items.push(DiffDisplayLine::Collapsed {
@@ -90,8 +89,8 @@ pub fn compute_display_lines(
             }
         }
 
-        for i in start..end {
-            display_items.push(DiffDisplayLine::Line(all_lines[i].clone()));
+        for line in all_lines.iter().take(end).skip(start) {
+            display_items.push(DiffDisplayLine::Line(line.clone()));
         }
 
         current_pos = end;
@@ -103,8 +102,8 @@ pub fn compute_display_lines(
         let is_expanded = is_section_expanded(collapsed_start, collapsed_end, expanded_sections);
 
         if is_expanded {
-            for i in collapsed_start..collapsed_end {
-                display_items.push(DiffDisplayLine::Line(all_lines[i].clone()));
+            for line in all_lines.iter().take(collapsed_end).skip(collapsed_start) {
+                display_items.push(DiffDisplayLine::Line(line.clone()));
             }
         } else {
             display_items.push(DiffDisplayLine::Collapsed {

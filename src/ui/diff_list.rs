@@ -77,15 +77,13 @@ impl DiffList {
         }));
 
         let git_store = workspace.read(cx).git_store().cloned();
-        self._git_store_subscription = if let Some(git_store) = git_store {
-            Some(cx.subscribe(&git_store, |this, _store, event, cx| {
+        self._git_store_subscription = git_store.map(|git_store| {
+            cx.subscribe(&git_store, |this, _store, event, cx| {
                 if matches!(event, GitStoreEvent::ChangedFilesUpdated) {
                     this.refresh_diffs(cx);
                 }
-            }))
-        } else {
-            None
-        };
+            })
+        });
     }
 
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
@@ -93,9 +91,7 @@ impl DiffList {
     }
 
     fn active_git_store(&self, cx: &App) -> Option<Entity<GitStore>> {
-        let Some(workspace) = self.active_workspace(cx) else {
-            return None;
-        };
+        let workspace = self.active_workspace(cx)?;
         workspace.read(cx).git_store().cloned()
     }
 

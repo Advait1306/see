@@ -1,7 +1,6 @@
 use git2::{Repository, StatusOptions};
 use gpui::{Context, EventEmitter, Task};
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +23,7 @@ pub enum GitStoreEvent {
 
 // TODO: This could potentially be a global store which is keyed to the path
 pub struct GitStore {
-    repository: Arc<Repository>,
+    repository: Repository,
     workdir: PathBuf,
     changed_files: Vec<ChangedFile>,
     _poll_task: Option<Task<()>>,
@@ -33,7 +32,7 @@ pub struct GitStore {
 impl EventEmitter<GitStoreEvent> for GitStore {}
 
 impl GitStore {
-    pub fn try_new(path: &PathBuf) -> Option<Self> {
+    pub fn try_new(path: &Path) -> Option<Self> {
         let repo = match Repository::discover(path) {
             Ok(repo) => repo,
             Err(e) => {
@@ -45,7 +44,7 @@ impl GitStore {
         let workdir = repo.workdir()?.to_path_buf();
 
         Some(Self {
-            repository: Arc::new(repo),
+            repository: repo,
             workdir,
             changed_files: Vec::new(),
             _poll_task: None,

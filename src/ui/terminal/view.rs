@@ -136,12 +136,11 @@ impl Render for TerminalView {
 
                 // Handle Cmd+V for paste
                 if event.keystroke.modifiers.platform && event.keystroke.key == "v" {
-                    if let Some(item) = cx.read_from_clipboard() {
-                        if let Some(text) = item.text() {
+                    if let Some(item) = cx.read_from_clipboard()
+                        && let Some(text) = item.text() {
                             this.inner.lock().write(text.as_bytes());
                             cx.notify();
                         }
-                    }
                     return;
                 }
 
@@ -179,14 +178,13 @@ impl Render for TerminalView {
                 };
 
                 // Shift+click extends selection
-                if selection_type == SelectionType::Simple && event.modifiers.shift {
-                    if inner.has_selection() {
+                if selection_type == SelectionType::Simple && event.modifiers.shift
+                    && inner.has_selection() {
                         inner.update_selection(point, side);
                         this.selection_phase = SelectionPhase::Selecting;
                         cx.notify();
                         return;
                     }
-                }
 
                 inner.start_selection(selection_type, point, side);
                 this.selection_phase = SelectionPhase::Selecting;
@@ -194,7 +192,7 @@ impl Render for TerminalView {
             }))
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _, cx| {
                 let pixel_delta = match event.delta {
-                    ScrollDelta::Lines(lines) => f32::from(lines.y) * CELL_HEIGHT,
+                    ScrollDelta::Lines(lines) => lines.y * CELL_HEIGHT,
                     ScrollDelta::Pixels(pixels) => f32::from(pixels.y),
                 };
 

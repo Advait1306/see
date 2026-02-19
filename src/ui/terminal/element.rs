@@ -218,8 +218,8 @@ impl Element for TerminalElement {
             }
 
             // Extract selection ranges from the terminal
-            if let Some(ref selection) = term.selection {
-                if let Some(range) = selection.to_range::<TerminalEventListener>(term) {
+            if let Some(ref selection) = term.selection
+                && let Some(range) = selection.to_range::<TerminalEventListener>(term) {
                     let start = range.start;
                     let end = range.end;
 
@@ -251,7 +251,6 @@ impl Element for TerminalElement {
                         });
                     }
                 }
-            }
 
             for line_idx in 0..screen_lines {
                 let grid_line = Line(line_idx as i32 - display_offset as i32);
@@ -270,7 +269,7 @@ impl Element for TerminalElement {
                     // Check if this is the cursor position
                     let is_block_cursor = cursor_screen_line == line_idx as i32
                         && cursor_col == col_idx
-                        && cursor.as_ref().map_or(false, |c| c.shape == CursorShape::Block);
+                        && cursor.as_ref().is_some_and(|c| c.shape == CursorShape::Block);
 
                     // For block cursor, skip rendering this character (CursorLayout handles it)
                     // For other cursor shapes, render normally

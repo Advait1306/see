@@ -361,7 +361,7 @@ mod tests {
     fn test_pane_tab_bar_renders() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = crate::test_helpers::TestFixture::new(cx);
-            cx.update(|cx| gpui_component::init(cx));
+            cx.update(gpui_component::init);
 
             let (_view, cx) = cx.add_window_view(|_window, cx| {
                 Pane::new(PathBuf::from("/tmp"), cx)
@@ -379,7 +379,7 @@ mod tests {
     fn test_pane_add_terminal_button_renders() {
         crate::test_helpers::run_gpui_test(|cx| {
             let _fixture = crate::test_helpers::TestFixture::new(cx);
-            cx.update(|cx| gpui_component::init(cx));
+            cx.update(gpui_component::init);
 
             let (_view, cx) = cx.add_window_view(|_window, cx| {
                 Pane::new(PathBuf::from("/tmp"), cx)
