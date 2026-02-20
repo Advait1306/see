@@ -1,12 +1,12 @@
 use august::assets::Assets;
-use august::commands::{self, Quit};
+use august::commands::{self, Quit, ShowSettings};
 use august::config;
 use august::stores::{EditorStore, GitHubAccountStore, TerminalStore, WindowStore, WorkspaceStore};
 use august::syntax::LanguageRegistry;
 use august::ui::WindowView;
 use gpui::{
-    App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, px,
-    size,
+    App, AppContext, Application, Bounds, Menu, MenuItem, TitlebarOptions, WindowBounds,
+    WindowOptions, point, px, size,
 };
 use gpui_component::Root;
 use std::borrow::Cow;
@@ -26,6 +26,16 @@ fn main() {
         cx.on_action(|_: &Quit, cx| {
             cx.quit();
         });
+
+        // macOS menu bar
+        cx.set_menus(vec![Menu {
+            name: "August".into(),
+            items: vec![
+                MenuItem::action("Settings...", ShowSettings),
+                MenuItem::separator(),
+                MenuItem::action("Quit August", Quit),
+            ],
+        }]);
 
         // Register Paper Mono font
         let font_data = include_bytes!("../assets/fonts/PaperMono-Regular.ttf");

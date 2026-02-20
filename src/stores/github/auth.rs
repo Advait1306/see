@@ -8,8 +8,8 @@ pub const GITHUB_CLIENT_ID: &str = "Iv23liZXdkklKaMCOedA";
 pub const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 pub const TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 
-const KEYCHAIN_SERVICE: &str = "com.august.github";
-const KEYCHAIN_ACCOUNT: &str = "oauth-token";
+const KEYCHAIN_SERVICE: &str = "com.sixhuman.august";
+const KEYCHAIN_ACCOUNT: &str = "github-oauth-token";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredCredentials {
@@ -32,21 +32,7 @@ pub fn save_credentials(access_token: &str, refresh_token: Option<&str>) {
 pub fn load_credentials() -> Option<StoredCredentials> {
     let bytes = get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).ok()?;
     let text = String::from_utf8(bytes.to_vec()).ok()?;
-
-    // Try JSON format first (new)
-    if let Ok(creds) = serde_json::from_str::<StoredCredentials>(&text) {
-        return Some(creds);
-    }
-
-    // Fall back to plain token string (old format migration)
-    if !text.is_empty() && !text.starts_with('{') {
-        return Some(StoredCredentials {
-            access_token: text,
-            refresh_token: None,
-        });
-    }
-
-    None
+    serde_json::from_str::<StoredCredentials>(&text).ok()
 }
 
 pub fn delete_credentials() {

@@ -17,6 +17,10 @@
 - All views (types that implement `Render`) should have their own file
 - Stores should not contain views - keep rendering logic in the `ui/` directory
 
+## Breaking Changes
+
+- Don't add backwards compatibility unless explicitly asked — just make the change directly
+
 ## Migration Strategy
 
 When making changes to persisted state formats:

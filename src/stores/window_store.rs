@@ -31,6 +31,7 @@ pub struct WindowStore {
     active_workspace_id: Option<String>,
     sidebar_collapsed: bool,
     right_sidebar: RightSidebarPanel,
+    settings_open: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -66,6 +67,7 @@ impl WindowStore {
             active_workspace_id,
             sidebar_collapsed: ui_state.sidebar_collapsed,
             right_sidebar: ui_state.right_sidebar,
+            settings_open: false,
             _subscriptions: vec![sub],
         }
     }
@@ -197,6 +199,26 @@ impl WindowStore {
         self.save();
         cx.emit(WindowStoreEvent::UiStateChanged);
         cx.notify();
+    }
+
+    pub fn settings_open(&self) -> bool {
+        self.settings_open
+    }
+
+    pub fn show_settings(&mut self, cx: &mut Context<Self>) {
+        if !self.settings_open {
+            self.settings_open = true;
+            cx.emit(WindowStoreEvent::UiStateChanged);
+            cx.notify();
+        }
+    }
+
+    pub fn hide_settings(&mut self, cx: &mut Context<Self>) {
+        if self.settings_open {
+            self.settings_open = false;
+            cx.emit(WindowStoreEvent::UiStateChanged);
+            cx.notify();
+        }
     }
 
     fn save(&self) {

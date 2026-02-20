@@ -16,7 +16,7 @@ path = "src/lib.rs"
 
 [package.metadata.bundle]
 name = "August"
-identifier = "com.august.app"
+identifier = "com.sixhuman.august"
 category = "public.app-category.developer-tools"
 short_description = "A terminal application with workspaces"
 osx_minimum_system_version = "10.15"

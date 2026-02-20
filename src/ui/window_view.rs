@@ -9,6 +9,7 @@ use crate::ui::diff_list::DiffList;
 use crate::ui::file_tree::FileTree;
 use crate::ui::pane_group::PaneGroupView;
 use crate::ui::pr_list::PrList;
+use crate::ui::settings_view::SettingsView;
 use crate::ui::workspace_sidebar::WorkspaceSidebar;
 use gpui::{
     div, percentage, px, relative, Animation, App, AppContext as _, Context, Entity, FocusHandle,
@@ -26,6 +27,7 @@ pub struct WindowView {
     file_tree: Entity<FileTree>,
     diff_list: Entity<DiffList>,
     pr_list: Entity<PrList>,
+    settings_view: Entity<SettingsView>,
     command_menu: Entity<CommandMenu>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -42,6 +44,7 @@ impl WindowView {
         let file_tree = cx.new(|cx| FileTree::new(window_store.clone(), cx));
         let diff_list = cx.new(|cx| DiffList::new(window_store.clone(), cx));
         let pr_list = cx.new(|cx| PrList::new(window_store.clone(), cx));
+        let settings_view = cx.new(|cx| SettingsView::new(window_store.clone(), cx));
         let command_menu = cx.new(|cx| CommandMenu::new(window_store.clone(), window, cx));
 
         let mut subscriptions = Vec::new();
@@ -59,6 +62,7 @@ impl WindowView {
             file_tree,
             diff_list,
             pr_list,
+            settings_view,
             command_menu,
             focus_handle: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -141,6 +145,24 @@ impl WindowView {
             store.toggle_sidebar(cx);
         });
         cx.notify();
+    }
+
+    fn show_settings(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.window_store.update(cx, |store, cx| {
+            store.show_settings(cx);
+        });
+        self.settings_view.read(cx).focus_handle(cx).focus(window);
+    }
+
+    fn hide_settings(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.window_store.update(cx, |store, cx| {
+            store.hide_settings(cx);
+        });
+        self.focus_active_content(window, cx);
+    }
+
+    fn settings_open(&self, cx: &App) -> bool {
+        self.window_store.read(cx).settings_open()
     }
 
     fn right_sidebar(&self, cx: &App) -> RightSidebarPanel {
@@ -236,6 +258,7 @@ impl Render for WindowView {
         let pane_group_view = self.active_pane_group_view(cx);
         let right_sidebar = self.right_sidebar(cx);
         let sidebar_collapsed = self.sidebar_collapsed(cx);
+        let settings_open = self.settings_open(cx);
 
         let focus_handle = self.focus_handle.clone();
         let theme = cx.theme();
@@ -315,6 +338,12 @@ impl Render for WindowView {
                 this.command_menu.update(cx, |menu, cx| {
                     menu.toggle(window, cx);
                 });
+            }))
+            .on_action(cx.listener(|this, _: &ShowSettings, window, cx| {
+                this.show_settings(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &HideSettings, window, cx| {
+                this.hide_settings(window, cx);
             }))
             .size_full()
             .flex()
@@ -405,8 +434,11 @@ impl Render for WindowView {
                     ),
             )
             // Main content area
-            // Ratios - DiffList: 2:5:5, FileTree: 1:4:1, Hidden: 1:6:0
-            .child({
+            .when(settings_open, |el| {
+                el.child(self.settings_view.clone())
+            })
+            .when(!settings_open, |el| {
+                // Ratios - DiffList: 2:5:5, FileTree: 1:4:1, Hidden: 1:6:0
                 // Width percentages based on ratios:
                 // With sidebar:    DiffList (2:5:5), FileTree (1:4:1), PullRequests (2:5:5), Hidden (1:5:0)
                 // Without sidebar: DiffList (0:5:5), FileTree (0:5:1), PullRequests (0:5:5), Hidden (0:6:0)
@@ -421,54 +453,56 @@ impl Render for WindowView {
                     (RightSidebarPanel::Hidden, true) => (0.0, 100.0),            // 0:6:0 → 6/6
                 };
 
-                div()
-                    .id("content-area")
-                    .flex_1()
-                    .w_full()
-                    .min_h_0()
-                    .flex()
-                    .flex_row()
-                    .when(!sidebar_collapsed, |el| {
-                        el.child(
+                el.child(
+                    div()
+                        .id("content-area")
+                        .flex_1()
+                        .w_full()
+                        .min_h_0()
+                        .flex()
+                        .flex_row()
+                        .when(!sidebar_collapsed, |el| {
+                            el.child(
+                                div()
+                                    .id("workspace-sidebar-container")
+                                    .debug_selector(|| "workspace-sidebar-container".into())
+                                    .w(relative(sidebar_pct / 100.0))
+                                    .h_full()
+                                    .flex_shrink_0()
+                                    .child(self.workspace_sidebar.clone()),
+                            )
+                        })
+                        .child(
                             div()
-                                .id("workspace-sidebar-container")
-                                .debug_selector(|| "workspace-sidebar-container".into())
-                                .w(relative(sidebar_pct / 100.0))
+                                .id("main-content")
+                                .debug_selector(|| "main-content".into())
+                                .w(relative(main_pct / 100.0))
                                 .h_full()
                                 .flex_shrink_0()
-                                .child(self.workspace_sidebar.clone()),
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .id("pane-container")
+                                        .flex_1()
+                                        .w_full()
+                                        .min_h_0()
+                                        .flex()
+                                        .flex_col()
+                                        .overflow_hidden()
+                                        .map(|el| {
+                                            if let Some(pgv) = pane_group_view.clone() {
+                                                el.child(pgv)
+                                            } else {
+                                                el
+                                            }
+                                        }),
+                                ),
                         )
-                    })
-                    .child(
-                        div()
-                            .id("main-content")
-                            .debug_selector(|| "main-content".into())
-                            .w(relative(main_pct / 100.0))
-                            .h_full()
-                            .flex_shrink_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .id("pane-container")
-                                    .flex_1()
-                                    .w_full()
-                                    .min_h_0()
-                                    .flex()
-                                    .flex_col()
-                                    .overflow_hidden()
-                                    .map(|el| {
-                                        if let Some(pgv) = pane_group_view.clone() {
-                                            el.child(pgv)
-                                        } else {
-                                            el
-                                        }
-                                    }),
-                            ),
-                    )
-                    .when(right_sidebar != RightSidebarPanel::Hidden, |el| {
-                        el.child(self.render_right_sidebar(right_sidebar, sidebar_collapsed, cx))
-                    })
+                        .when(right_sidebar != RightSidebarPanel::Hidden, |el| {
+                            el.child(self.render_right_sidebar(right_sidebar, sidebar_collapsed, cx))
+                        }),
+                )
             })
             // Footer
             .child(

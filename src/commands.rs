@@ -32,6 +32,8 @@ actions!(
         TogglePrList,           // Right sidebar (pull requests)
         ShowCommandMenu,
         HideCommandMenu,
+        ShowSettings,
+        HideSettings,
         Quit,
     ]
 );
@@ -62,6 +64,9 @@ pub fn register_keybindings(cx: &mut App) {
         // Command menu
         KeyBinding::new("cmd-p", ShowCommandMenu, None),
         KeyBinding::new("escape", HideCommandMenu, Some("CommandMenu")),
+        // Settings
+        KeyBinding::new("cmd-,", ShowSettings, None),
+        KeyBinding::new("escape", HideSettings, Some("SettingsView")),
         // Tab key handling (only when Terminal has focus)
         KeyBinding::new("tab", SendTabToTerminal, Some("Terminal")),
         KeyBinding::new("shift-tab", SendShiftTabToTerminal, Some("Terminal")),

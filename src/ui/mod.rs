@@ -6,6 +6,7 @@ pub mod file_tree;
 pub mod pane;
 pub mod pane_group;
 pub mod pr_list;
+pub mod settings_view;
 mod terminal;
 pub mod workspace_sidebar;
 
