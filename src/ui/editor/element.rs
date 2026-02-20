@@ -44,7 +44,7 @@ use gpui_component::theme::ActiveTheme;
 /// Custom Element for efficient editor rendering
 pub(crate) struct EditorElement {
     pub(crate) view: Entity<EditorView>,
-    pub(crate) buffer: Entity<Buffer>,
+    pub(crate) buffer: Option<Entity<Buffer>>,
     pub(crate) cursor_line: usize,
     pub(crate) cursor_col: usize,
     pub(crate) scroll_offset: usize,
@@ -151,7 +151,7 @@ impl Element for EditorElement {
         if let Some((display_lines, max_old, max_new)) = diff_mode_data {
             // Diff mode prepaint
             let total_lines = display_lines.len();
-            let buffer = self.buffer.read(cx);
+            let buffer_ref = self.buffer.as_ref().map(|b| b.read(cx));
 
             // Collect visible lines and track which buffer lines need highlighting
             let mut diff_visible_lines = Vec::new();
@@ -163,10 +163,8 @@ impl Element for EditorElement {
                 if line_idx < total_lines {
                     match &display_lines[line_idx] {
                         DiffDisplayLine::Line(line) => {
-                            // For Insert and Equal lines, we have a new_line_num that maps to the buffer
-                            let byte_offset = if let Some(new_num) = line.new_line_num {
-                                let line_idx = new_num.saturating_sub(1); // new_line_num is 1-indexed
-                                // Track range for highlight fetching
+                            let byte_offset = if let (Some(new_num), Some(buffer)) = (line.new_line_num, &buffer_ref) {
+                                let line_idx = new_num.saturating_sub(1);
                                 min_buffer_line = Some(min_buffer_line.map_or(line_idx, |m| m.min(line_idx)));
                                 max_buffer_line = Some(max_buffer_line.map_or(line_idx, |m| m.max(line_idx)));
                                 Some(buffer.line_to_byte(line_idx))
@@ -190,7 +188,7 @@ impl Element for EditorElement {
             }
 
             // Get syntax highlights for the visible buffer lines
-            let highlights = if let (Some(min_line), Some(max_line)) = (min_buffer_line, max_buffer_line) {
+            let highlights = if let (Some(min_line), Some(max_line), Some(buffer)) = (min_buffer_line, max_buffer_line, &buffer_ref) {
                 buffer
                     .highlights_for_visible_lines(min_line, max_line + 1)
                     .unwrap_or_default()
@@ -226,7 +224,22 @@ impl Element for EditorElement {
         }
 
         // Normal mode prepaint
-        let buffer = self.buffer.read(cx);
+        let Some(ref buffer) = self.buffer else {
+            // No buffer and no diff mode — return empty layout
+            return EditorLayoutState {
+                visible_lines: Vec::new(),
+                cursor_position: None,
+                line_number_width: 0.0,
+                scroll_x: self.scroll_x,
+                selection_ranges: Vec::new(),
+                line_diffs: Vec::new(),
+                diff_mode_lines: Vec::new(),
+                diff_old_num_width: 0.0,
+                diff_new_num_width: 0.0,
+                highlights: Vec::new(),
+            };
+        };
+        let buffer = buffer.read(cx);
         let line_count = buffer.line_count();
 
         let mut visible_lines = Vec::new();

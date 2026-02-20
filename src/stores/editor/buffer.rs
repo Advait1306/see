@@ -157,6 +157,35 @@ impl Buffer {
         Ok(buffer)
     }
 
+    /// Create a buffer from in-memory text with a filename for language detection.
+    /// No file I/O, no git, no background polling.
+    pub fn from_text(text: String, filename: PathBuf, cx: &mut Context<Self>) -> Self {
+        let rope = Rope::from_str(&text);
+
+        let mut buffer = Self {
+            rope,
+            file_path: filename.clone(),
+            saved_mtime: None,
+            is_dirty: false,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            line_diffs: Vec::new(),
+            diff_lines: Vec::new(),
+            repository: None,
+            head_oid: None,
+            language: None,
+            syntax_tree: None,
+            parser: None,
+        };
+
+        let registry = LanguageRegistry::global(cx);
+        if let Some(lang) = registry.read(cx).language_for_path(&filename) {
+            buffer.set_language(lang);
+        }
+
+        buffer
+    }
+
     fn check_and_reload_if_changed(&mut self, cx: &mut Context<Self>) {
         if self.check_external_changes() {
             cx.emit(BufferEvent::ExternalChange);

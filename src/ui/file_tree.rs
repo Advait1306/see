@@ -11,7 +11,7 @@ use gpui_component::theme::ActiveTheme;
 use gpui_component::{Icon, IconName, IndexPath, Selectable, Sizable};
 use std::path::PathBuf;
 
-pub struct NonSelectableItem(ListItem);
+pub struct NonSelectableItem(pub ListItem);
 
 impl Selectable for NonSelectableItem {
     fn selected(self, _selected: bool) -> Self {

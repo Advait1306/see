@@ -8,7 +8,7 @@ use crate::constants::{CELL_HEIGHT, CELL_WIDTH, PADDING};
 use crate::stores::{Buffer, BufferEvent, DiffLine, EditorState, EditorStore, OpenBufferError};
 use crate::types::{EditorTabConfig, SelectionPhase, Tab, TabConfig};
 use gpui::{
-    div, App, Bounds, Context, Entity, Focusable, FocusHandle, InteractiveElement, IntoElement,
+    div, App, AppContext as _, Bounds, Context, Entity, Focusable, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
     Render, ScrollDelta, ScrollWheelEvent, Styled, Subscription, Task, Window,
 };
@@ -197,6 +197,68 @@ impl EditorView {
         }
     }
 
+    /// Create a diff-mode editor from pre-parsed diff lines (no buffer needed)
+    pub fn new_from_diff_lines(
+        filename: String,
+        diff_lines: Vec<DiffLine>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let max_old = diff_lines
+            .iter()
+            .filter_map(|l| l.old_line_num)
+            .max()
+            .unwrap_or(0);
+        let max_new = diff_lines
+            .iter()
+            .filter_map(|l| l.new_line_num)
+            .max()
+            .unwrap_or(0);
+
+        // Build the "new side" content for syntax highlighting.
+        // Place each line at its new_line_num position, filling gaps with empty lines.
+        let mut new_lines: Vec<String> = vec![String::new(); max_new];
+        for line in &diff_lines {
+            if let Some(new_num) = line.new_line_num {
+                if new_num > 0 && new_num <= max_new {
+                    new_lines[new_num - 1] = line.content.clone();
+                }
+            }
+        }
+        let buffer_text = new_lines.join("\n");
+
+        let file_path = PathBuf::from(&filename);
+        let buffer = cx.new(|cx| Buffer::from_text(buffer_text, file_path.clone(), cx));
+
+        let display_lines = compute_display_lines(&diff_lines, &[], DIFF_CONTEXT_LINES);
+
+        Self {
+            buffer: Some(buffer),
+            buffer_error: None,
+            file_path,
+            cursor_line: 0,
+            cursor_col: 0,
+            scroll_offset: 0,
+            scroll_x: 0.0,
+            scroll_accumulator: 0.0,
+            focus_handle: cx.focus_handle(),
+            last_bounds: None,
+            last_line_number_width: 0.0,
+            cursor_visible: false,
+            last_cursor_move: std::time::Instant::now(),
+            selection: None,
+            selection_phase: SelectionPhase::None,
+            diff_mode: Some(DiffModeData {
+                all_lines: diff_lines,
+                display_lines,
+                expanded_sections: Vec::new(),
+                max_old_line_num: max_old,
+                max_new_line_num: max_new,
+            }),
+            _blink_task: None,
+            _buffer_subscription: None,
+        }
+    }
+
     /// Expand a collapsed section in diff mode
     pub fn expand_diff_section(&mut self, start_idx: usize, end_idx: usize) {
         if let Some(ref mut diff_data) = self.diff_mode {
@@ -376,8 +438,8 @@ impl Render for EditorView {
         let is_focused = focus_handle.is_focused(window);
         let is_diff_mode = self.diff_mode.is_some();
 
-        // Show error state if buffer is not available
-        let Some(buffer) = self.buffer.clone() else {
+        // Show error state if buffer is not available AND not in diff mode
+        if self.buffer.is_none() && self.diff_mode.is_none() {
             let file_name = self.file_path.file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
@@ -425,7 +487,7 @@ impl Render for EditorView {
                         )
                 )
                 .into_any_element();
-        };
+        }
 
         div()
             .id("editor-wrapper")
@@ -603,7 +665,7 @@ impl Render for EditorView {
             .size_full()
             .child(EditorElement {
                 view: cx.entity().clone(),
-                buffer,
+                buffer: self.buffer.clone(),
                 cursor_line: self.cursor_line,
                 cursor_col: self.cursor_col,
                 scroll_offset: self.scroll_offset,
@@ -655,7 +717,7 @@ impl Tab for EditorView {
 mod tests {
     use super::*;
     use super::super::input::handle_key;
-    use gpui::{AppContext as _, Keystroke};
+    use gpui::Keystroke;
 
     fn simulate_key(view: &mut EditorView, key: &str, cx: &mut Context<EditorView>) {
         let event = KeyDownEvent {
