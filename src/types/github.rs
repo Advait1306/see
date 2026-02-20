@@ -80,10 +80,20 @@ pub struct PrReview {
 }
 
 #[derive(Debug, Clone)]
+pub struct PrCommit {
+    pub sha: String,
+    pub message: String,
+    pub author_name: String,
+    pub author: Option<String>,
+    pub date: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct PrDetail {
     pub body: Option<String>,
     pub comments: Vec<PrComment>,
     pub reviews: Vec<PrReview>,
+    pub commits: Vec<PrCommit>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -1,7 +1,7 @@
 use crate::stores::github::http;
 use crate::stores::github::GitHubAccountStore;
 use crate::types::github::{
-    PrComment, PrDetail, PrReview, PullRequest, PullRequestState, ReviewState,
+    PrComment, PrCommit, PrDetail, PrReview, PullRequest, PullRequestState, ReviewState,
 };
 use crate::types::{PrDetailTabConfig, Tab, TabConfig};
 use gpui::{
@@ -48,12 +48,25 @@ enum ConversationRow {
     },
 }
 
+#[derive(Clone)]
+enum CommitRow {
+    Commit {
+        short_sha: String,
+        title: String,
+        author_name: String,
+        author: Option<String>,
+        date: String,
+    },
+}
+
 pub struct PrDetailView {
     pull_request: PullRequest,
     active_sub_tab: PrSubTab,
     load_state: LoadState,
     conversation_rows: Vec<ConversationRow>,
     list_state: ListState,
+    commit_rows: Vec<CommitRow>,
+    commits_list_state: ListState,
     focus_handle: FocusHandle,
 }
 
@@ -65,6 +78,8 @@ impl PrDetailView {
             load_state: LoadState::Loading,
             conversation_rows: Vec::new(),
             list_state: ListState::new(0, ListAlignment::Top, px(1024.0)),
+            commit_rows: Vec::new(),
+            commits_list_state: ListState::new(0, ListAlignment::Top, px(1024.0)),
             focus_handle: cx.focus_handle(),
         };
         view.fetch_detail(cx);
@@ -92,15 +107,19 @@ impl PrDetailView {
             let token_body = token.clone();
             let token_comments = token.clone();
             let token_reviews = token.clone();
+            let token_commits = token.clone();
             let client_body = client.clone();
             let client_comments = client.clone();
             let client_reviews = client.clone();
+            let client_commits = client.clone();
             let owner_b = owner.clone();
             let owner_c = owner.clone();
             let owner_r = owner.clone();
+            let owner_k = owner.clone();
             let repo_b = repo.clone();
             let repo_c = repo.clone();
             let repo_r = repo.clone();
+            let repo_k = repo.clone();
 
             let body_fut = handle.spawn(async move {
                 let url = format!(
@@ -165,19 +184,44 @@ impl PrDetailView {
                 }
             });
 
+            let commits_fut = handle.spawn(async move {
+                let url = format!(
+                    "https://api.github.com/repos/{}/{}/pulls/{}/commits?per_page=250",
+                    owner_k, repo_k, number
+                );
+                let resp = client_commits
+                    .get(&url)
+                    .header("Authorization", format!("Bearer {}", token_commits))
+                    .header("User-Agent", "august-app")
+                    .header("Accept", "application/vnd.github+json")
+                    .send()
+                    .await;
+                match resp {
+                    Ok(r) if r.status().is_success() => {
+                        let json: serde_json::Value = r.json().await.unwrap_or_default();
+                        parse_commits(&json)
+                    }
+                    _ => Vec::new(),
+                }
+            });
+
             let body = body_fut.await.unwrap_or(None);
             let comments = comments_fut.await.unwrap_or_default();
             let reviews = reviews_fut.await.unwrap_or_default();
+            let commits = commits_fut.await.unwrap_or_default();
 
             let detail = PrDetail {
                 body,
                 comments,
                 reviews,
+                commits,
             };
 
             this.update(cx, |this, cx| {
                 this.conversation_rows = build_conversation_rows(&this.pull_request, &detail);
                 this.list_state.reset(this.conversation_rows.len());
+                this.commit_rows = build_commit_rows(&detail.commits);
+                this.commits_list_state.reset(this.commit_rows.len());
                 this.load_state = LoadState::Loaded;
                 cx.notify();
             })
@@ -272,6 +316,63 @@ impl PrDetailView {
         }
     }
 
+    fn render_commits(&self, cx: &Context<Self>) -> gpui::AnyElement {
+        let theme = cx.theme();
+
+        match &self.load_state {
+            LoadState::Loading => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("Loading..."),
+                )
+                .into_any_element(),
+            LoadState::Error(msg) => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.danger)
+                        .child(msg.clone()),
+                )
+                .into_any_element(),
+            LoadState::Loaded if self.commit_rows.is_empty() => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("No commits"),
+                )
+                .into_any_element(),
+            LoadState::Loaded => {
+                list(
+                    self.commits_list_state.clone(),
+                    cx.processor(|this, ix: usize, _window, cx| -> AnyElement {
+                        if let Some(row) = this.commit_rows.get(ix) {
+                            render_commit_row(row, ix, cx).into_any_element()
+                        } else {
+                            div().into_any_element()
+                        }
+                    }),
+                )
+                .size_full()
+                .into_any_element()
+            }
+        }
+    }
+
     fn render_placeholder(&self, label: &str, cx: &Context<Self>) -> impl IntoElement + use<'_> {
         let theme = cx.theme();
         div()
@@ -310,7 +411,7 @@ impl Render for PrDetailView {
                     .overflow_hidden()
                     .map(|el| match self.active_sub_tab {
                         PrSubTab::Conversation => el.child(self.render_conversation(cx)),
-                        PrSubTab::Commits => el.child(self.render_placeholder("Commits", cx)),
+                        PrSubTab::Commits => el.child(self.render_commits(cx)),
                         PrSubTab::FilesChanged => {
                             el.child(self.render_placeholder("Files Changed", cx))
                         }
@@ -643,6 +744,105 @@ fn parse_reviews(json: &serde_json::Value) -> Vec<PrReview> {
             })
         })
         .collect()
+}
+
+fn parse_commits(json: &serde_json::Value) -> Vec<PrCommit> {
+    let Some(items) = json.as_array() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let sha = item["sha"].as_str()?.to_string();
+            let message = item["commit"]["message"].as_str().unwrap_or("").to_string();
+            let author_name = item["commit"]["author"]["name"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            let author = item["author"]["login"].as_str().map(|s| s.to_string());
+            let date = item["commit"]["author"]["date"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            Some(PrCommit {
+                sha,
+                message,
+                author_name,
+                author,
+                date,
+            })
+        })
+        .collect()
+}
+
+fn build_commit_rows(commits: &[PrCommit]) -> Vec<CommitRow> {
+    commits
+        .iter()
+        .map(|c| {
+            let title = c.message.lines().next().unwrap_or("").to_string();
+            let short_sha = c.sha.get(..7).unwrap_or(&c.sha).to_string();
+            CommitRow::Commit {
+                short_sha,
+                title,
+                author_name: c.author_name.clone(),
+                author: c.author.clone(),
+                date: c.date.clone(),
+            }
+        })
+        .collect()
+}
+
+fn render_commit_row(row: &CommitRow, index: usize, cx: &App) -> impl IntoElement + use<> {
+    let theme = cx.theme().clone();
+
+    let CommitRow::Commit {
+        short_sha,
+        title,
+        author_name,
+        author,
+        date,
+    } = row;
+
+    let display_author = if let Some(login) = author {
+        login.clone()
+    } else {
+        author_name.clone()
+    };
+
+    div()
+        .id(("commit-row", index))
+        .w_full()
+        .px(px(20.0))
+        .py(px(10.0))
+        .border_b_1()
+        .border_color(theme.border)
+        .flex()
+        .flex_col()
+        .gap(px(4.0))
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.foreground)
+                .overflow_hidden()
+                .text_ellipsis()
+                .child(title.clone()),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(
+                    div()
+                        .font_family("monospace")
+                        .text_color(theme.link)
+                        .child(short_sha.clone()),
+                )
+                .child(display_author)
+                .child(format_timestamp(date)),
+        )
 }
 
 fn format_timestamp(ts: &str) -> String {
