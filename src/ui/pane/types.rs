@@ -1,6 +1,6 @@
 use crate::types::Tab;
 use crate::types::TabConfig;
-use crate::ui::{EditorView, TerminalView};
+use crate::ui::{EditorView, PrDetailView, TerminalView};
 use gpui::{App, Entity, Focusable, Window};
 use serde::{Deserialize, Serialize};
 
@@ -34,11 +34,12 @@ pub enum Axis {
     Vertical,
 }
 
-/// Represents a tab item which can be either a terminal or an editor
+/// Represents a tab item which can be either a terminal, editor, or PR detail
 #[derive(Clone)]
 pub enum TabItem {
     Terminal(Entity<TerminalView>),
     Editor(Entity<EditorView>),
+    PullRequest(Entity<PrDetailView>),
 }
 
 impl TabItem {
@@ -46,6 +47,7 @@ impl TabItem {
         match self {
             TabItem::Terminal(t) => t.read(cx).label(cx),
             TabItem::Editor(e) => e.read(cx).label(cx),
+            TabItem::PullRequest(pr) => pr.read(cx).label(cx),
         }
     }
 
@@ -53,6 +55,7 @@ impl TabItem {
         match self {
             TabItem::Terminal(t) => t.read(cx).to_config(cx),
             TabItem::Editor(e) => e.read(cx).to_config(cx),
+            TabItem::PullRequest(pr) => pr.read(cx).to_config(cx),
         }
     }
 
@@ -60,6 +63,7 @@ impl TabItem {
         match self {
             TabItem::Terminal(t) => t.read(cx).focus_handle(cx).focus(window),
             TabItem::Editor(e) => e.read(cx).focus_handle(cx).focus(window),
+            TabItem::PullRequest(pr) => pr.read(cx).focus_handle(cx).focus(window),
         }
     }
 }

@@ -55,6 +55,37 @@ pub enum AuthState {
     Error(String),
 }
 
+#[derive(Debug, Clone)]
+pub struct PrComment {
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReviewState {
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Pending,
+}
+
+#[derive(Debug, Clone)]
+pub struct PrReview {
+    pub author: String,
+    pub body: String,
+    pub state: ReviewState,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PrDetail {
+    pub body: Option<String>,
+    pub comments: Vec<PrComment>,
+    pub reviews: Vec<PrReview>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DeviceCodeResponse {
     pub device_code: String,

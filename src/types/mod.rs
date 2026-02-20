@@ -5,4 +5,4 @@ mod selection;
 mod tab;
 
 pub use selection::SelectionPhase;
-pub use tab::{EditorTabConfig, Tab, TabConfig, TerminalTabConfig};
+pub use tab::{EditorTabConfig, PrDetailTabConfig, Tab, TabConfig, TerminalTabConfig};

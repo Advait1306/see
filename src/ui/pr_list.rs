@@ -1,9 +1,11 @@
 use crate::stores::github::{GitHubAccountStore, GitHubStore};
 use crate::stores::{WindowStore, WindowStoreEvent, Workspace, WorkspaceEvent};
 use crate::types::github::{AuthState, PullRequest, RemoteAuthState};
+use crate::ui::pane::TabItem;
+use crate::ui::pr_detail_view::PrDetailView;
 use gpui::{
-    div, px, uniform_list, App, ClipboardItem, Context, Entity, FocusHandle, Focusable,
-    FontWeight, InteractiveElement, IntoElement, ParentElement, Render,
+    div, px, uniform_list, App, AppContext as _, ClipboardItem, Context, Entity, FocusHandle,
+    Focusable, FontWeight, InteractiveElement, IntoElement, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, Window,
 };
 use gpui::prelude::FluentBuilder;
@@ -361,7 +363,15 @@ impl PrList {
                 let theme = cx.theme().clone();
                 range
                     .filter_map(|ix| this.pull_requests.get(ix).map(|pr| (ix, pr.clone())))
-                    .map(|(ix, pr)| render_pr_row(&theme, &pr, ix))
+                    .map(|(ix, pr)| {
+                        let on_click = cx.listener({
+                            let pr = pr.clone();
+                            move |this, _, _, cx| {
+                                this.open_pr_detail(&pr, cx);
+                            }
+                        });
+                        render_pr_row(&theme, &pr, ix).on_click(on_click)
+                    })
                     .collect()
             },
         ))
@@ -369,15 +379,29 @@ impl PrList {
         .into_any_element()
     }
 
+    fn open_pr_detail(&self, pr: &PullRequest, cx: &mut Context<Self>) {
+        let Some(workspace) = self.active_workspace(cx) else {
+            return;
+        };
+
+        let pane_store = workspace.read(cx).pane_store().clone();
+        let pr = pr.clone();
+        pane_store.update(cx, |ps, cx| {
+            if let Some(pane) = ps.active_pane.clone() {
+                pane.update(cx, |p, cx| {
+                    let pr_view = cx.new(|cx| PrDetailView::new(pr, cx));
+                    p.add_tab(TabItem::PullRequest(pr_view), cx);
+                });
+            }
+        });
+    }
 }
 
 fn render_pr_row(
     theme: &gpui_component::theme::Theme,
     pr: &PullRequest,
     index: usize,
-) -> impl IntoElement + use<> {
-    let url = pr.html_url.clone();
-
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(("pr-row", index))
         .w_full()
@@ -391,11 +415,6 @@ fn render_pr_row(
         .hover(|s| s.bg(gpui::black().opacity(0.05)))
         .border_b_1()
         .border_color(theme.border.opacity(0.5))
-        .on_click(move |_, _, _| {
-            let _ = std::process::Command::new("open")
-                .arg(&url)
-                .spawn();
-        })
         // Title row
         .child(
             div()

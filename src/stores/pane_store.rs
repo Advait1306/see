@@ -21,7 +21,8 @@ use crate::config;
 use crate::stores::TerminalStore;
 use crate::types::TabConfig;
 use crate::ui::pane::{Axis, DividerDrag, Pane, PaneEvent, SplitDirection, TabItem};
-use crate::ui::{EditorView, TerminalView};
+use crate::types::github::{GitHubRepo, PullRequest, PullRequestState};
+use crate::ui::{EditorView, PrDetailView, TerminalView};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Pixels, Point};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -267,6 +268,26 @@ impl PaneStore {
                                     )
                                 });
                                 pane.tabs.push(TabItem::Editor(editor));
+                            }
+                            TabConfig::PullRequest(pr_config) => {
+                                let pull_request = PullRequest {
+                                    number: pr_config.number,
+                                    title: pr_config.title.clone(),
+                                    state: PullRequestState::Open,
+                                    head_ref: pr_config.head_ref.clone(),
+                                    base_ref: pr_config.base_ref.clone(),
+                                    author_login: pr_config.author_login.clone(),
+                                    draft: pr_config.draft,
+                                    html_url: pr_config.html_url.clone(),
+                                    repo: GitHubRepo {
+                                        owner: pr_config.owner.clone(),
+                                        repo: pr_config.repo.clone(),
+                                    },
+                                    created_at: pr_config.created_at.clone(),
+                                    updated_at: pr_config.updated_at.clone(),
+                                };
+                                let pr_view = cx.new(|cx| PrDetailView::new(pull_request, cx));
+                                pane.tabs.push(TabItem::PullRequest(pr_view));
                             }
                         }
                     }

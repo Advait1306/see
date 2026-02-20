@@ -1,6 +1,6 @@
 pub mod account_store;
 mod auth;
-mod http;
+pub mod http;
 mod remote;
 pub mod store;
 
