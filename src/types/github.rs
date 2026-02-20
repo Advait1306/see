@@ -69,4 +69,7 @@ pub struct TokenResponse {
     pub access_token: String,
     pub token_type: String,
     pub scope: String,
+    pub refresh_token: Option<String>,
+    pub expires_in: Option<u64>,
+    pub refresh_token_expires_in: Option<u64>,
 }

@@ -180,7 +180,10 @@ impl GitHubAccountStore {
                 }
 
                 if let Ok(token_response) = serde_json::from_str::<TokenResponse>(&body) {
-                    auth::save_token_to_keychain(&token_response.access_token);
+                    auth::save_credentials(
+                        &token_response.access_token,
+                        token_response.refresh_token.as_deref(),
+                    );
 
                     let (username, installations) = {
                         let client = client.clone();
@@ -218,7 +221,7 @@ impl GitHubAccountStore {
     }
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) {
-        auth::delete_token_from_keychain();
+        auth::delete_credentials();
         self.access_token = None;
         self.auth_state = AuthState::SignedOut;
         self.installations.clear();
@@ -229,57 +232,102 @@ impl GitHubAccountStore {
     }
 
     fn try_restore_session(&mut self, cx: &mut Context<Self>) {
-        if let Some(token) = auth::load_token_from_keychain() {
-            self.access_token = Some(token.clone());
+        let Some(creds) = auth::load_credentials() else {
+            return;
+        };
+        self.access_token = Some(creds.access_token.clone());
 
-            cx.spawn(async move |this, cx| {
-                let client = http::http_client();
-                let handle = http::http_runtime().handle().clone();
+        cx.spawn(async move |this, cx| {
+            let client = http::http_client();
+            let handle = http::http_runtime().handle().clone();
 
-                let username = {
-                    let client = client.clone();
-                    let token = token.clone();
-                    handle
-                        .spawn(async move { fetch_username(&client, &token).await })
-                        .await
-                        .unwrap()
-                };
+            // Try the stored access token first
+            let mut token = creds.access_token.clone();
+            let username = {
+                let client = client.clone();
+                let t = token.clone();
+                handle
+                    .spawn(async move { fetch_username(&client, &t).await })
+                    .await
+                    .unwrap()
+            };
 
-                if let Some(username) = username {
-                    let installations = {
+            // If access token is expired, try refreshing
+            let username = if username.is_none() {
+                if let Some(refresh_token) = &creds.refresh_token {
+                    let refreshed = {
                         let client = client.clone();
-                        let token = token.clone();
+                        let rt = refresh_token.clone();
                         handle
-                            .spawn(async move { fetch_installations(&client, &token).await })
+                            .spawn(async move {
+                                auth::refresh_access_token(&client, &rt).await
+                            })
                             .await
                             .unwrap()
                     };
 
-                    let _ = this.update(cx, |this, cx| {
-                        this.auth_state = AuthState::SignedIn { username };
+                    if let Some(new_tokens) = refreshed {
+                        auth::save_credentials(
+                            &new_tokens.access_token,
+                            new_tokens.refresh_token.as_deref(),
+                        );
+                        token = new_tokens.access_token.clone();
 
-                        this.installations.clear();
-                        for inst in installations {
-                            this.installations
-                                .insert(inst.account_login.to_lowercase(), inst);
-                        }
+                        let _ = this.update(cx, |this, _cx| {
+                            this.access_token = Some(new_tokens.access_token.clone());
+                        });
 
-                        cx.emit(GitHubAccountStoreEvent::AuthStateChanged);
-                        cx.emit(GitHubAccountStoreEvent::InstallationsUpdated);
-                        cx.notify();
-                    });
+                        let client = client.clone();
+                        let t = token.clone();
+                        handle
+                            .spawn(async move { fetch_username(&client, &t).await })
+                            .await
+                            .unwrap()
+                    } else {
+                        None
+                    }
                 } else {
-                    let _ = this.update(cx, |this, cx| {
-                        auth::delete_token_from_keychain();
-                        this.access_token = None;
-                        this.auth_state = AuthState::SignedOut;
-                        cx.emit(GitHubAccountStoreEvent::AuthStateChanged);
-                        cx.notify();
-                    });
+                    None
                 }
-            })
-            .detach();
-        }
+            } else {
+                username
+            };
+
+            if let Some(username) = username {
+                let installations = {
+                    let client = client.clone();
+                    let t = token.clone();
+                    handle
+                        .spawn(async move { fetch_installations(&client, &t).await })
+                        .await
+                        .unwrap()
+                };
+
+                let _ = this.update(cx, |this, cx| {
+                    this.auth_state = AuthState::SignedIn { username };
+                    this.access_token = Some(token);
+
+                    this.installations.clear();
+                    for inst in installations {
+                        this.installations
+                            .insert(inst.account_login.to_lowercase(), inst);
+                    }
+
+                    cx.emit(GitHubAccountStoreEvent::AuthStateChanged);
+                    cx.emit(GitHubAccountStoreEvent::InstallationsUpdated);
+                    cx.notify();
+                });
+            } else {
+                let _ = this.update(cx, |this, cx| {
+                    auth::delete_credentials();
+                    this.access_token = None;
+                    this.auth_state = AuthState::SignedOut;
+                    cx.emit(GitHubAccountStoreEvent::AuthStateChanged);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 }
 
