@@ -3,6 +3,7 @@ pub mod command_menu;
 pub mod diff_list;
 mod editor;
 pub mod file_tree;
+pub mod markdown;
 pub mod pane;
 pub mod pane_group;
 pub mod pr_detail_view;

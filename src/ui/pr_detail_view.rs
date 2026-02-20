@@ -258,10 +258,9 @@ impl PrDetailView {
             LoadState::Loaded => {
                 list(
                     self.list_state.clone(),
-                    cx.processor(|this, ix: usize, _window, cx| -> AnyElement {
-                        let theme = cx.theme().clone();
+                    cx.processor(|this, ix: usize, window, cx| -> AnyElement {
                         if let Some(row) = this.conversation_rows.get(ix) {
-                            render_conversation_row(&theme, row, ix).into_any_element()
+                            render_conversation_row(row, ix, window, cx).into_any_element()
                         } else {
                             div().into_any_element()
                         }
@@ -402,10 +401,13 @@ fn build_conversation_rows(pr: &PullRequest, detail: &PrDetail) -> Vec<Conversat
 }
 
 fn render_conversation_row(
-    theme: &gpui_component::theme::Theme,
     row: &ConversationRow,
     index: usize,
+    window: &Window,
+    cx: &App,
 ) -> impl IntoElement + use<> {
+    let theme = cx.theme().clone();
+
     div()
         .id(("conversation-row", index))
         .w_full()
@@ -519,10 +521,12 @@ fn render_conversation_row(
                         .child(format!("{} opened this pull request", author_login)),
                 )
                 .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.foreground)
-                        .child(body.clone()),
+                    crate::ui::markdown::render_markdown(
+                        body,
+                        &format!("pr-body-{}", index),
+                        window,
+                        cx,
+                    ),
                 )
                 .into_any_element(),
             ConversationRow::Comment {
@@ -582,10 +586,12 @@ fn render_conversation_row(
                     )
                     .when(!body.trim().is_empty(), |el| {
                         el.child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.foreground)
-                                .child(body.clone()),
+                            crate::ui::markdown::render_markdown(
+                                body,
+                                &format!("pr-comment-{}", index),
+                                window,
+                                cx,
+                            ),
                         )
                     })
                     .into_any_element()

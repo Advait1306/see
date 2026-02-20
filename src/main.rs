@@ -18,6 +18,9 @@ fn main() {
         // Initialize gpui-component
         gpui_component::init(cx);
 
+        // Register HTTP client for image loading
+        cx.set_http_client(august::stores::github::http::GpuiHttpClient::as_arc());
+
         // Register keybindings
         commands::register_keybindings(cx);
         august::ui::command_menu::register_command_menu_keybindings(cx);
