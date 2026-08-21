@@ -2,23 +2,23 @@
 members = [".", "xtask"]
 
 [package]
-name = "august"
+name = "see"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "august"
+name = "see"
 path = "src/main.rs"
 
 [lib]
-name = "august"
+name = "see"
 path = "src/lib.rs"
 
 [package.metadata.bundle]
-name = "August"
-identifier = "com.august.app"
+name = "SEE"
+identifier = "com.advait.see"
 category = "public.app-category.developer-tools"
-short_description = "A terminal application with workspaces"
+short_description = "A native software engineering environment"
 osx_minimum_system_version = "10.15"
 icon = ["assets/icon.icns"]
 

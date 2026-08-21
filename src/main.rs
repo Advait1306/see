@@ -1,9 +1,9 @@
-use august::assets::Assets;
-use august::commands::{self, Quit};
-use august::config;
-use august::stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
-use august::syntax::LanguageRegistry;
-use august::ui::WindowView;
+use see::assets::Assets;
+use see::commands::{self, Quit};
+use see::config;
+use see::stores::{EditorStore, TerminalStore, WindowStore, WorkspaceStore};
+use see::syntax::LanguageRegistry;
+use see::ui::WindowView;
 use gpui::{
     App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, px,
     size,
@@ -20,7 +20,7 @@ fn main() {
 
         // Register keybindings
         commands::register_keybindings(cx);
-        august::ui::command_menu::register_command_menu_keybindings(cx);
+        see::ui::command_menu::register_command_menu_keybindings(cx);
 
         // Handle app-level Quit action
         cx.on_action(|_: &Quit, cx| {

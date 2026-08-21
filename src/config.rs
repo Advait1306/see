@@ -4,9 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const APP_NAME: &str = if cfg!(debug_assertions) {
-    "August (Dev)"
+    "SEE (Dev)"
 } else {
-    "August"
+    "SEE"
 };
 
 thread_local! {
@@ -19,9 +19,9 @@ pub fn config_dir() -> PathBuf {
             return p.clone();
         }
         let folder = if cfg!(debug_assertions) {
-            "August-Dev"
+            "SEE-Dev"
         } else {
-            "August"
+            "SEE"
         };
         dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))

@@ -524,53 +524,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
-name = "august"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "core-text",
- "dirs 6.0.0",
- "env_logger",
- "futures",
- "git2",
- "gpui",
- "gpui-component",
- "gpui-component-assets",
- "log",
- "notify",
- "nucleo-matcher",
- "parking_lot",
- "rfd",
- "ropey 1.6.1",
- "rust-embed",
- "serde",
- "serde_json",
- "similar",
- "smol",
- "tempfile",
- "tree-sitter",
- "tree-sitter-bash",
- "tree-sitter-c",
- "tree-sitter-cpp",
- "tree-sitter-css",
- "tree-sitter-go",
- "tree-sitter-html",
- "tree-sitter-java",
- "tree-sitter-javascript",
- "tree-sitter-json",
- "tree-sitter-python",
- "tree-sitter-ruby",
- "tree-sitter-rust",
- "tree-sitter-swift",
- "tree-sitter-toml-ng",
- "tree-sitter-typescript",
- "tree-sitter-yaml",
- "uuid",
- "walkdir",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5419,6 +5372,53 @@ checksum = "cc1f0cbffaac4852523ce30d8bd3c5cdc873501d96ff467ca09b6767bb8cd5c0"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "see"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "core-text",
+ "dirs 6.0.0",
+ "env_logger",
+ "futures",
+ "git2",
+ "gpui",
+ "gpui-component",
+ "gpui-component-assets",
+ "log",
+ "notify",
+ "nucleo-matcher",
+ "parking_lot",
+ "rfd",
+ "ropey 1.6.1",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "similar",
+ "smol",
+ "tempfile",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-c",
+ "tree-sitter-cpp",
+ "tree-sitter-css",
+ "tree-sitter-go",
+ "tree-sitter-html",
+ "tree-sitter-java",
+ "tree-sitter-javascript",
+ "tree-sitter-json",
+ "tree-sitter-python",
+ "tree-sitter-ruby",
+ "tree-sitter-rust",
+ "tree-sitter-swift",
+ "tree-sitter-toml-ng",
+ "tree-sitter-typescript",
+ "tree-sitter-yaml",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]

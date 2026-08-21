@@ -1,84 +1,117 @@
-# August
+# SEE
 
-A native macOS IDE built with Rust and [GPUI](https://gpui.rs), featuring integrated terminals, a code editor with syntax highlighting, file tree navigation, and git diff viewing.
+**SEE (Software Engineering Environment)** is a deprecated native macOS prototype for navigating, editing, running, and reviewing software without stitching together several separate applications.
 
-## Features
+SEE was built in Rust with [GPUI](https://gpui.rs). It combines a terminal-first workspace, source editor, project navigation, and Git review tools in a single native interface.
 
-- **Multi-pane terminals** — Split panes horizontally and vertically with drag-and-drop tab rearrangement, powered by Alacritty's terminal emulator
-- **Code editor** — Syntax highlighting via Tree-sitter for 15+ languages (Rust, TypeScript, Python, Go, C/C++, and more), with undo/redo and keyboard navigation
-- **File tree** — Browse and open files from the right sidebar
-- **Git diff viewer** — Carousel through changed files with inline diffs, showing added/modified/deleted status
-- **Workspaces** — Organize projects into separate workspaces, each with its own pane layout and file tree
-- **Persistent state** — Window layout, sidebar visibility, expanded folders, and workspace list are saved across sessions
+## Project status
 
-## Keybindings
+SEE is deprecated and is no longer under active development. The core workspace, editor, terminal, file navigation, and diff-review flows are implemented, but the broader product was intended to become an agent-native software engineering environment rather than only another IDE.
 
-| Key | Action |
-|-----|--------|
-| `Cmd+Q` | Quit |
-| `Cmd+W` | Close pane |
-| `Cmd+{` / `Cmd+}` | Previous / next pane |
-| `Cmd+Alt+[` / `Cmd+Alt+]` | Previous / next workspace |
-| `Cmd+B` | Toggle workspace sidebar (left) |
-| `Cmd+L` | Toggle file tree (right) |
-| `Cmd+G` | Toggle diff list (right) |
-| `J` / `K` | Previous / next diff (when diff list is focused) |
+I stopped developing SEE after OpenAI's [Codex](https://developers.openai.com/codex) evolved into the environment I had been trying to build: a system that can understand a codebase, carry out engineering tasks, run checks, and help review the resulting changes. SEE was developed independently and is not related to Codex; this repository remains public as a record of the technical work and the product direction it explored.
 
-## Building
+## What it does
 
-Requires Rust (edition 2024) and macOS.
+- **Composable workspaces** — keep projects in separate workspaces, each with its own panes and file tree
+- **Multi-pane terminals** — split panes horizontally or vertically and rearrange tabs with drag and drop
+- **Native code editor** — rope-backed buffers, undo/redo, keyboard navigation, and Tree-sitter highlighting for 15+ languages
+- **Project navigation** — browse and open project files without leaving the workspace
+- **Git review** — move through changed files and inspect inline diffs by added, modified, or deleted state
+- **Persistent sessions** — restore windows, layouts, sidebar state, expanded folders, and workspaces between launches
 
-**Development build:**
+## Why this project exists
+
+Software work often gets fragmented across a terminal multiplexer, editor, file browser, Git client, and—more recently—coding agents. SEE explored what those workflows could feel like when they shared one native state model and one interaction surface.
+
+The implemented prototype also served as an experiment in building a substantial desktop application in Rust: terminal emulation, text editing, syntax parsing, process management, persistence, and reactive UI all live in the same codebase.
+
+## Architecture
+
+```text
+src/
+├── stores/              # Application state and events
+│   ├── workspace/       # Workspaces and their persisted state
+│   ├── editor/          # Rope-backed text buffers
+│   ├── git/             # Repository status and diff computation
+│   ├── pane_store.rs    # Split-pane tree and layout operations
+│   ├── file_tree_store.rs
+│   ├── terminal_store.rs
+│   └── window_store.rs
+├── ui/                  # GPUI views
+│   ├── window_view.rs   # Root application surface
+│   ├── pane/            # Pane and tab composition
+│   ├── editor/          # Editor rendering and interaction
+│   ├── terminal/        # Alacritty-backed terminal view
+│   ├── file_tree.rs
+│   ├── diff_list.rs
+│   └── workspace_sidebar.rs
+├── syntax/              # Tree-sitter language registry
+├── commands.rs          # Actions and keybindings
+├── config.rs            # JSON persistence
+└── constants.rs         # Theme and layout constants
+```
+
+Stores own application state and emit events when it changes. Views read from those stores during rendering and observe them for updates, which keeps state transitions separate from presentation.
+
+## Technical highlights
+
+- Native UI and reactive state management with GPUI
+- Terminal emulation built on `alacritty_terminal`
+- Incremental syntax highlighting with Tree-sitter grammars
+- Rope-based editor buffers with `ropey`
+- Repository inspection and diff generation with `git2`
+- Embedded application assets and a custom macOS bundle pipeline
+
+## Build locally
+
+### Prerequisites
+
+- macOS
+- Rust stable with edition 2024 support
+- Xcode and the Xcode Command Line Tools
+- Xcode's Metal Toolchain, required by the GPUI rendering stack
+
+If the Metal Toolchain is not already installed:
+
+```sh
+xcodebuild -downloadComponent MetalToolchain
+```
+
+Build, bundle, ad-hoc sign, and launch a development app:
 
 ```sh
 cargo xtask dev
 ```
 
-This builds a debug bundle, ad-hoc signs it, and launches the app.
-
-**Release build:**
+Build a notarized release DMG:
 
 ```sh
 cargo xtask release
 ```
 
-Builds an optimized, code-signed, and notarized `.dmg` (requires Apple developer credentials in `.env`).
+The release task requires Apple developer credentials in a local `.env` file.
 
-## Testing
+## Test
 
 ```sh
 cargo test --lib
 ```
 
-Runs 70 tests covering stores, buffers, syntax highlighting, pane management, and UI rendering.
+The library test suite contains more than 60 tests covering stores, buffers, syntax handling, pane operations, persistence, and rendering behavior.
 
-## Architecture
+## Keybindings
 
-```
-src/
-├── stores/          # State management (GPUI Global pattern)
-│   ├── workspace/   # Workspace & WorkspaceStore
-│   ├── editor/      # EditorStore, Buffer (rope-based)
-│   ├── git/         # GitStore, diff computation
-│   ├── pane_store   # Pane tree layout
-│   ├── file_tree_store
-│   ├── terminal_store
-│   └── window_store # Per-window UI state
-├── ui/              # View components (each in its own file)
-│   ├── window_view  # Root container
-│   ├── pane/        # Pane with tab bar
-│   ├── editor/      # Code editor view
-│   ├── terminal/    # Terminal view
-│   ├── file_tree    # File navigator
-│   ├── diff_list    # Diff carousel
-│   └── workspace_sidebar
-├── syntax/          # Tree-sitter language registry
-├── commands.rs      # Actions & keybindings
-├── config.rs        # JSON persistence (~/.local/share/August-Dev/)
-└── constants.rs     # Colors (Catppuccin Mocha), dimensions
-```
-
-**Stores** hold all application state and emit events on changes. **Views** read from stores during render and observe them for re-renders. Views never hold copies of store state.
+| Key | Action |
+| --- | --- |
+| `Cmd+Q` | Quit |
+| `Cmd+W` | Close pane |
+| `Cmd+{` / `Cmd+}` | Previous / next pane |
+| `Cmd+Alt+[` / `Cmd+Alt+]` | Previous / next workspace |
+| `Cmd+B` | Toggle workspace sidebar |
+| `Cmd+L` | Toggle file tree |
+| `Cmd+G` | Toggle diff list |
+| `Cmd+P` | Open command menu |
+| `J` / `K` | Previous / next diff while the diff list is focused |
 
 ## License
 

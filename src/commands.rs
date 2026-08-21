@@ -6,25 +6,25 @@ use gpui::{actions, App, KeyBinding};
 
 // Pane commands (works for terminal, editor, future pane types)
 actions!(
-    august,
+    see,
     [ClosePane, PrevPane, NextPane,]
 );
 
 // Terminal-specific commands
 actions!(
-    august,
+    see,
     [SendTabToTerminal, SendShiftTabToTerminal,]
 );
 
 // Workspace commands
 actions!(
-    august,
+    see,
     [PrevWorkspace, NextWorkspace,]
 );
 
 // UI commands
 actions!(
-    august,
+    see,
     [
         ToggleWorkspaceSidebar, // Left sidebar (workspaces)
         ToggleFileTree,         // Right sidebar (file system)
@@ -37,7 +37,7 @@ actions!(
 
 // Diff carousel commands
 actions!(
-    august,
+    see,
     [PrevDiff, NextDiff,]
 );
 

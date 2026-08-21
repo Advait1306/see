@@ -5,9 +5,9 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-const APP_NAME: &str = "August";
-const APP_NAME_DEV: &str = "August (Dev)";
-const BUNDLE_ID_DEV: &str = "com.august.app.dev";
+const APP_NAME: &str = "SEE";
+const APP_NAME_DEV: &str = "SEE (Dev)";
+const BUNDLE_ID_DEV: &str = "com.advait.see.dev";
 const SIGNING_IDENTITY: &str = "Developer ID Application: Advait Bansode (N8K96VJAHS)";
 
 fn main() -> Result<()> {
@@ -43,11 +43,11 @@ fn dev() -> Result<()> {
     let plist_content = fs::read_to_string(&plist_path)?;
     let plist_content = plist_content
         .replace(
-            "<string>August</string>",
+            "<string>SEE</string>",
             &format!("<string>{}</string>", APP_NAME_DEV),
         )
         .replace(
-            "<string>com.august.app</string>",
+            "<string>com.advait.see</string>",
             &format!("<string>{}</string>", BUNDLE_ID_DEV),
         );
     fs::write(&plist_path, plist_content)?;
@@ -62,7 +62,7 @@ fn dev() -> Result<()> {
     ])?;
 
     println!("==> Launching {}...", APP_NAME_DEV);
-    let executable = bundle_path.join("Contents/MacOS/august");
+    let executable = bundle_path.join("Contents/MacOS/see");
     run_command(executable.to_str().unwrap(), &[])?;
 
     Ok(())
